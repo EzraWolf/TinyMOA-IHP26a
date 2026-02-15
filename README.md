@@ -1,6 +1,7 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
 # DOCS WIP
+Processed using IHP SG13G2 OpenPDK toolkit on TinyTapeout (TT) shuttle IHP26a.
 
 - [Read the documentation for project](docs/info.md)
 
