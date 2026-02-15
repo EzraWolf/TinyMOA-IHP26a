@@ -3,7 +3,25 @@
 # DOCS WIP
 Processed using IHP SG13G2 OpenPDK toolkit on TinyTapeout (TT) shuttle IHP26a.
 
-- [Read the documentation for project](docs/info.md)
+NOTICE: Licensed under Apache 2.0
+
+You can:
+- Use it for any purpose (personal, academic)
+- Modify, distribute, and sublicense it
+- Apply different licenses to their modifications
+
+You **MUST**:
+- Provide attribution
+- Include a copy of the Apache 2.0 license
+- State any significant changes they made
+- Include the NOTICE file if you provide one
+
+You **CANNOT**:
+- Use my trademakrs
+- Hold me liable for any damages
+- Claim patent rights you've granted become revoked
+
+[Read the documentation for project](docs/info.md)
 
 ## What is Tiny Tapeout?
 
