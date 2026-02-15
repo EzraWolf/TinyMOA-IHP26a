@@ -2,7 +2,7 @@ project:
   title:        "TinyDCIM: RISC-V CPU with Digital Compute-in-Memory Accelerator"
   author:       "Ezra Wolf"
   discord:      "erstfeld" # Optional
-  description:  "A RISC-V compatible 8b CPU based in TinyQV with a digital compute-in-memory accelerator based on SRAM arrays."
+  description:  "Simple 8-bit counter test for sanity check. Increments on each clock cycle."
   language:     "Verilog" # Valid: Verilog, SystemVerilog, Amaranth, VHDL, etc.
   clock_hz:     50000000 # Clock Hz (or 0 if N/A)
 
@@ -34,14 +34,14 @@ pinout:
   ui[7]: "Unused"
 
   # Outputs
-  uo[0]: "Unused"
-  uo[1]: "Unused"
-  uo[2]: "Unused"
-  uo[3]: "Unused"
-  uo[4]: "Unused"
-  uo[5]: "Unused"
-  uo[6]: "Unused"
-  uo[7]: "Unused"
+  uo[0]: "Counter bit 0 (LSB)"
+  uo[1]: "Counter bit 1"
+  uo[2]: "Counter bit 2"
+  uo[3]: "Counter bit 3"
+  uo[4]: "Counter bit 4"
+  uo[5]: "Counter bit 5"
+  uo[6]: "Counter bit 6"
+  uo[7]: "Counter bit 7 (MSB)"
 
   # Bidirectional pins
   uio[0]: "Unused"

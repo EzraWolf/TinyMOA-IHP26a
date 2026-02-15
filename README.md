@@ -1,6 +1,9 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
 # DOCS WIP
+
+Finaly submission is under heavy work. Currently only a basic counter is submitted as a sanity check.
+
 Processed using IHP SG13G2 OpenPDK toolkit on TinyTapeout (TT) shuttle IHP26a.
 
 NOTICE: Licensed under Apache 2.0
