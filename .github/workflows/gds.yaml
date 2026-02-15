@@ -2,6 +2,8 @@ name: gds
 
 on:
   push:
+    paths:
+      - 'src/**/*.v'
   workflow_dispatch:
 
 jobs:
