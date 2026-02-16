@@ -1,64 +1,10 @@
-![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
+![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg) ![](../../workflows/gds/badge.svg)
 
-# DOCS WIP
 
-Finaly submission is under heavy work. Currently only a basic counter is submitted as a sanity check.
+# TinyMOA Overview
 
-Processed using IHP SG13G2 OpenPDK toolkit on TinyTapeout (TT) shuttle IHP26a.
+A modified [TinyQV](https://github.com/MichaelBell/tinyQV) RISC-V CPU with an SRAM-based analog compute-in-memory (CIM) accelerator demonstrating CMOS-compatible matrix-vector multiplication (MVM).
 
-NOTICE: Licensed under Apache 2.0
+Fabricated on IHP 130nm with the [IHP SG13G2 OpenPDK](https://www.ihp-microelectronics.com/services/research-and-prototyping-service/fast-design-enablement/open-source-pdk) toolkit through [TinyTapeout](https://www.tinytapeout.com) (TT) on shuttle [IHP26a](https://app.tinytapeout.com/shuttles/ttihp26a).
 
-You can:
-- Use it for any purpose (personal, academic)
-- Modify, distribute, and sublicense it
-- Apply different licenses to their modifications
-
-You **MUST**:
-- Provide attribution
-- Include a copy of the Apache 2.0 license
-- State any significant changes they made
-- Include the NOTICE file if you provide one
-
-You **CANNOT**:
-- Use my trademakrs
-- Hold me liable for any damages
-- Claim patent rights you've granted become revoked
-
-[Read the documentation for project](docs/info.md)
-
-## What is Tiny Tapeout?
-
-Tiny Tapeout is an educational project that aims to make it easier and cheaper than ever to get your digital and analog designs manufactured on a real chip.
-
-To learn more and get started, visit https://tinytapeout.com.
-
-## Set up your Verilog project
-
-1. Add your Verilog files to the `src` folder.
-2. Edit the [info.yaml](info.yaml) and update information about your project, paying special attention to the `source_files` and `top_module` properties. If you are upgrading an existing Tiny Tapeout project, check out our [online info.yaml migration tool](https://tinytapeout.github.io/tt-yaml-upgrade-tool/).
-3. Edit [docs/info.md](docs/info.md) and add a description of your project.
-4. Adapt the testbench to your design. See [test/README.md](test/README.md) for more information.
-
-The GitHub action will automatically build the ASIC files using [LibreLane](https://www.zerotoasiccourse.com/terminology/librelane/).
-
-## Enable GitHub actions to build the results page
-
-- [Enabling GitHub Pages](https://tinytapeout.com/faq/#my-github-action-is-failing-on-the-pages-part)
-
-## Resources
-
-- [FAQ](https://tinytapeout.com/faq/)
-- [Digital design lessons](https://tinytapeout.com/digital_design/)
-- [Learn how semiconductors work](https://tinytapeout.com/siliwiz/)
-- [Join the community](https://tinytapeout.com/discord)
-- [Build your design locally](https://www.tinytapeout.com/guides/local-hardening/)
-
-## What next?
-
-- [Submit your design to the next shuttle](https://app.tinytapeout.com/).
-- Edit [this README](README.md) and explain your design, how it works, and how to test it.
-- Share your project on your social network of choice:
-  - LinkedIn [#tinytapeout](https://www.linkedin.com/search/results/content/?keywords=%23tinytapeout) [@TinyTapeout](https://www.linkedin.com/company/100708654/)
-  - Mastodon [#tinytapeout](https://chaos.social/tags/tinytapeout) [@matthewvenn](https://chaos.social/@matthewvenn)
-  - X (formerly Twitter) [#tinytapeout](https://twitter.com/hashtag/tinytapeout) [@tinytapeout](https://twitter.com/tinytapeout)
-  - Bluesky [@tinytapeout.com](https://bsky.app/profile/tinytapeout.com)
+NOTICE: *Licensed under Apache 2.0*. If interested in using this work commercially or for research, don't hesistate to reach out.

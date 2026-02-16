@@ -8,7 +8,7 @@
 // Example from
 // https://github.com/Dullbi/8bit_up-down_counter/blob/d0e6485f4578b2b1da64d66e02ddbc277e2e7412/src/project.v
 
-module tt_um_ezrawolf_tinydcim_ihp26a (
+module tt_um_tinymoa_ihp26a (
     input  wire [7:0] ui_in,    // Dedicated inputs
     output wire [7:0] uo_out,   // Dedicated outputs
     input  wire [7:0] uio_in,   // IOs: Input path (unused)

@@ -1,5 +1,5 @@
 project:
-  title:        "TinyDCIM: RISC-V CPU with Digital Compute-in-Memory Accelerator"
+  title:        "TinyMOA: RISC-V CPU with Digital Compute-in-Memory Accelerator"
   author:       "Ezra Wolf"
   discord:      "erstfeld" # Optional
   description:  "Simple 8-bit counter test for sanity check. Increments on each clock cycle."
@@ -11,8 +11,8 @@ project:
   tiles: "8x2"
 
   # Top module name - must start with "tt_um_"
-  # Make it unique with your GitHub username.
-  top_module:  "tt_um_ezrawolf_tinydcim_ihp26a"
+  # Make it unique with your GitHub usernam or the TT shuttle designation.
+  top_module:  "tt_um_tinymoa_ihp26a"
 
   # List your project's source files here.
   # Source files must be in ./src and you must list each source file separately, one per line.
