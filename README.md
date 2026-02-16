@@ -7,7 +7,7 @@ A modified [TinyQV](https://github.com/MichaelBell/tinyQV) RISC-V CPU with an SR
 
 Fabricated on an IHP 130nm process with the [IHP SG13G2 OpenPDK](https://www.ihp-microelectronics.com/services/research-and-prototyping-service/fast-design-enablement/open-source-pdk) toolkit, submited through [TinyTapeout](https://www.tinytapeout.com) (TT) on shuttle [IHP26a](https://app.tinytapeout.com/shuttles/ttihp26a).
 
-> **NOTE**: This repo is an *implementation* of TinyMOA for TT. [TinyMOA is developed here instead](https://github.com/EzraWolf/TinyMOA).
+> **NOTE**: [The TinyMOA CPU and CIM cores are developed here](https://github.com/EzraWolf/TinyMOA) - this repo is only the *implementation* of TinyMOA for TT. 
 > 
 > **Status**: Under active development.
 > 
