@@ -1,8 +1,8 @@
 project:
-  title:        "TinyMOA: RISC-V CPU with Digital Compute-in-Memory Accelerator"
+  title:        "TinyMOA: RISC-V CPU with Compute-in-Memory Accelerator"
   author:       "Ezra Wolf"
   discord:      "erstfeld" # Optional
-  description:  "Simple 8-bit counter test for sanity check. Increments on each clock cycle."
+  description:  "RISC-V CPU based on TinyQV with an integrated SRAM-based compute-in-memory (CIM) accelerator for performing efficient analog matrix multiplications."
   language:     "Verilog" # Valid: Verilog, SystemVerilog, Amaranth, VHDL, etc.
   clock_hz:     50000000 # Clock Hz (or 0 if N/A)
 
