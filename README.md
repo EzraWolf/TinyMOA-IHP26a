@@ -59,5 +59,5 @@ Contact wolfez@mail.uc.edu for technical collaboration, research, or commercial 
 - [TinyQV](https://tinytapeout.com/chips/ttihp25a/tt_um_MichaelBell_tinyQV) by Michael Bell
 
 
-TinyMOA™: Memory-Optimized Architecture for Edge ML
-© 2026 Ezra Wolf. All rights reserved.
+*TinyMOA™: Memory-Optimized Architecture for Edge ML*
+*Copyright 2026 Ezra Wolf. All rights reserved.*
