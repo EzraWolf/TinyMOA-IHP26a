@@ -18,6 +18,8 @@ Fabricated on an IHP 130nm process with the [IHP SG13G2 OpenPDK](https://www.ihp
 
 A neural network accelerator that performs matrix multiplication directly inside SRAM arrays, eliminating data movement between the CPU and memory. Your brain operates similarly by processing your thoughts in the same place it stores your memories.
 
+A RISC-V CPU based on [TinyQV](https://github.com/MichaelBell/tinyQV) acts as an embedded interface and controller for the CIM core so that it can run programs without external peripherals. Exact CPU and CIM architectural diagrams will be added shortly.
+
 CIM achieves significant performance, power, and efficiency improvements over the traditional von-Neumann architecture which must load data from memory, process it, and store it - repeated billions of times.
 
 
