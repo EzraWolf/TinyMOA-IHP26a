@@ -41,6 +41,7 @@
 
 
   "//": "SRAM macro integration",
+  "SYNTH_HIERARCHY_MODE": "keep",
   "MACROS": {
     "RM_IHPSG13_1P_512x32_c2_bm_bist": {
       "instances": {
@@ -77,8 +78,8 @@
   },
 
   "PDN_MACRO_CONNECTIONS": [
-    "sram VPWR VGND VDD! VSS!",
-    "sram VPWR VGND VDDARRAY! VSS!"
+    "top.sram VPWR VGND VDD! VSS!",
+    "top.sram VPWR VGND VDDARRAY! VSS!"
   ],
 
   "//": "Custom PDN config: SRAM power pins are on Metal4, need Metal4↔TopMetal1 connection",
