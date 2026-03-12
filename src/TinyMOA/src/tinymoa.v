@@ -56,7 +56,7 @@ module tinymoa_top (
     wire sram_en  = is_sram && (mem_read || mem_write);
     wire sram_wen = is_sram && mem_write;
 
-    SG13G2_512x32_SP u_sram (
+    RM_IHPSG13_1P_512x32_c2_bm_bist u_sram (
         .A_CLK      (clk),
         .A_MEN      (sram_en),
         .A_WEN      (sram_wen),
