@@ -50,30 +50,27 @@
         }
       },
       "gds": [
-        "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.gds"
+        "dir::./TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.gds"
       ],
       "lef": [
-        "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.lef"
+        "dir::./TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.lef"
       ],
       "lib": {
         "nom_*": [
-          "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_typ_1p20V_25C.lib"
+          "dir::./TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_typ_1p20V_25C.lib"
         ],
         "min_*": [
-          "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_fast_1p32V_m55C.lib"
+          "dir::./TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_fast_1p32V_m55C.lib"
         ],
         "max_*": [
-          "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_slow_1p08V_125C.lib"
+          "dir::./TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_slow_1p08V_125C.lib"
         ],
         "*": [
-          "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_typ_1p20V_25C.lib"
+          "dir::./TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_typ_1p20V_25C.lib"
         ]
       },
-      "nl": [
-        "dir::../src/TinyMOA/src/memory/sram.v"
-      ],
       "spice": [
-        "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.cdl"
+        "dir::./TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.cdl"
       ]
     }
   },
