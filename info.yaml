@@ -6,23 +6,33 @@ project:
   language:     "Verilog" # Valid: Verilog, SystemVerilog, Amaranth, VHDL, etc.
   clock_hz:     50000000 # Clock Hz (or 0 if N/A)
 
-  # A single tile is about 167x108 uM
+  # A single tile is ~167x108um
   # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
   tiles: "8x2"
 
-  # Top module name - must start with "tt_um_"
-  # Make it unique with your GitHub usernam or the TT shuttle designation.
+  # Top module must start with "tt_um_"
   top_module:  "tt_um_tinymoa_ihp26a"
 
   # List your project's source files here.
   # Source files must be in ./src and you must list each source file separately, one per line.
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
-  source_files:
-    - "project.v"
+
+source_files:
+  - "src/project.v"
+  - "TinyMOA/src/tinymoa.v"
+  - "TinyMOA/src/core.v"
+  - "TinyMOA/src/decoder.v"
+  - "TinyMOA/src/registers.v"
+  - "TinyMOA/src/counter.v"
+  - "TinyMOA/src/alu/alu.v"
+  - "TinyMOA/src/alu/shifter.v"
+  - "TinyMOA/src/alu/multiplier.v"
+  - "TinyMOA/src/memory/sram.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
+
   # Inputs
   ui[0]: "enable"
   ui[1]: "up_down"
@@ -34,14 +44,14 @@ pinout:
   ui[7]: ""
 
   # Outputs
-  uo[0]: "q[0]"
-  uo[1]: "q[1]"
-  uo[2]: "q[2]"
-  uo[3]: "q[3]"
-  uo[4]: "q[4]"
-  uo[5]: "q[5]"
-  uo[6]: "q[6]"
-  uo[7]: "q[7]"
+  uo[0]: "dbg_pc[0]"
+  uo[1]: "dbg_pc[1]"
+  uo[2]: "dbg_pc[2]"
+  uo[3]: "dbg_pc[3]"
+  uo[4]: "dbg_pc[4]"
+  uo[5]: "dbg_state[0]"
+  uo[6]: "dbg_state[1]"
+  uo[7]: "dbg_state[2]"
 
   # Bidirectional pins
   uio[0]: ""
