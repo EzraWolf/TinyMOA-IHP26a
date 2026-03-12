@@ -1,0 +1,17 @@
+[project]
+name = "TinyMOA-IHP26a"
+version = "0.1.0"
+description = "Nibble-serial RV32EC CPU with compute-in-memory (CIM) accelerator."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cocotb>=2.0.1",
+    "cocotb-test>=0.2.6",
+    "numpy>=2.4.2",
+    "pytest>=9.0.2",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.2",
+]
