@@ -52,19 +52,6 @@ module tinymoa_top (
     reg [31:0] sram_rdata;
     reg        sram_ready;
 
-`ifdef BEHAVIORAL_SRAM
-    reg [31:0] sram [0:511];
-
-    always @(posedge clk) begin
-        sram_ready <= 1'b0;
-        if (is_sram && (mem_read || mem_write)) begin
-            if (mem_write)
-                sram[sram_word_addr] <= mem_wdata; // TODO: byte/half masking
-            sram_rdata <= sram[sram_word_addr];
-            sram_ready <= 1'b1;
-        end
-    end
-`else
     // IHP SG13G2 512x32 single-port SRAM macro
     wire sram_en  = is_sram && (mem_read || mem_write);
     wire sram_wen = is_sram && mem_write;
@@ -92,7 +79,6 @@ module tinymoa_top (
     always @(posedge clk) begin
         sram_ready <= sram_en;
     end
-`endif
 
     // QSPI controller stubbed out for initial GDS generation
     wire [31:0] qspi_rdata  = 32'd0;

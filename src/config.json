@@ -31,6 +31,79 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
+
+
+
+
+
+
+
+
+
+  "//": "SRAM macro integration",
+  "MACROS": {
+    "RM_IHPSG13_1P_512x32_c2_bm_bist": {
+      "instances": {
+        "sram": {
+          "location": [42, 80],
+          "orientation": "R90"
+        }
+      },
+      "gds": [
+        "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.gds"
+      ],
+      "lef": [
+        "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.lef"
+      ],
+      "lib": {
+        "nom_*": [
+          "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_typ_1p20V_25C.lib"
+        ],
+        "min_*": [
+          "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_fast_1p32V_m55C.lib"
+        ],
+        "max_*": [
+          "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_slow_1p08V_125C.lib"
+        ],
+        "*": [
+          "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist_typ_1p20V_25C.lib"
+        ]
+      },
+      "nl": [
+        "dir::../src/TinyMOA/src/memory/sram.v"
+      ],
+      "spice": [
+        "dir::../src/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_512x32_c2_bm_bist.cdl"
+      ]
+    }
+  },
+
+  "PDN_MACRO_CONNECTIONS": [
+    "sram VPWR VGND VDD! VSS!",
+    "sram VPWR VGND VDDARRAY! VSS!"
+  ],
+
+  "//": "Custom PDN config: SRAM power pins are on Metal4, need Metal4↔TopMetal1 connection",
+  "PDN_CFG": "dir::pdn_cfg.tcl",
+
+  "//": "SRAM GDS has no PR boundary layer; read full GDS instead of blackbox",
+  "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
+
+  "//": "SRAM macro internals trigger massive DRC in Magic; skip (KLayout DRC also skipped)",
+  "ERROR_ON_MAGIC_DRC": false,
+
+  "//": "Blackbox SRAM macros during SPICE extraction for LVS, as the macros are not LVS clean",
+  "MAGIC_EXT_ABSTRACT_CELLS": ["RM_IHPSG13_.*"],
+
+
+
+
+
+
+
+
+
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
