@@ -44,7 +44,7 @@
   "MACROS": {
     "RM_IHPSG13_1P_512x32_c2_bm_bist": {
       "instances": {
-        "top/sram": {
+        "top.sram": {
           "location": [42, 80],
           "orientation": "R90"
         }
