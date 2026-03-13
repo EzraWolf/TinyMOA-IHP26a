@@ -77,7 +77,7 @@
   "PDN_CFG": "dir::pdn_cfg.tcl",
 
   "//": "SRAM GDS has no PR boundary layer; read full GDS instead of blackbox",
-  "MAGIC_MACRO_STD_CELL_SOURCE": "LEF",
+  "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
 
   "//": "SRAM macro internals trigger massive DRC in Magic; skip (KLayout DRC also skipped)",
   "ERROR_ON_MAGIC_DRC": false,
