@@ -13,10 +13,10 @@ module tinymoa_top (
 );
 
     // Core memory bus
-    wire [23:0] mem_addr = 24'h0;
+    wire [23:0] mem_addr;
     wire        mem_read;
     wire        mem_write;
-    wire [31:0] mem_a_din = 32'h0;
+    wire [31:0] mem_a_din;
     wire [31:0] mem_b_din = 32'h0;
     wire [1:0]  mem_size;
 
@@ -76,29 +76,29 @@ module tinymoa_top (
         .A_BIST_MEN (1'b0),
         .A_BIST_WEN (1'b0),
         .A_BIST_REN (1'b0),
-        .A_BIST_ADDR(9'd0),
-        .A_BIST_DIN (32'd0),
-        .A_BIST_BM  (32'd0),
+        .A_BIST_ADDR(9'b0),
+        .A_BIST_DIN (32'b0),
+        .A_BIST_BM  (32'b0),
 
         // Duplicate Port A for now just to get a working macro for OpenLane.
         .B_CLK      (clk),
-        .B_MEN      (sram_en),
-        .B_WEN      (sram_wen),
-        .B_REN      (sram_en && !sram_wen),
+        .B_MEN      (1'b0),
+        .B_WEN      (1'b0),
+        .B_REN      (1'b0),
         .B_ADDR     (sram_b_addr),
         .B_DIN      (mem_b_din),
         .B_DLY      (1'b0),
         .B_DOUT     (sram_b_dout),
-        .B_BM       (32'hFFFFFFFF),
+        .B_BM       (32'b0),
 
         .B_BIST_CLK (1'b0),
         .B_BIST_EN  (1'b0),
         .B_BIST_MEN (1'b0),
         .B_BIST_WEN (1'b0),
         .B_BIST_REN (1'b0),
-        .B_BIST_ADDR(9'd0),
-        .B_BIST_DIN (32'd0),
-        .B_BIST_BM  (32'd0)
+        .B_BIST_ADDR(9'b0),
+        .B_BIST_DIN (32'b0),
+        .B_BIST_BM  (32'b0)
     );
 
     /* Single-port
