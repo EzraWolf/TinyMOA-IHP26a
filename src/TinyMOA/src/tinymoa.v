@@ -16,7 +16,8 @@ module tinymoa_top (
     wire [23:0] mem_addr;
     wire        mem_read;
     wire        mem_write;
-    wire [31:0] mem_wdata;
+    wire [31:0] mem_a_din;
+    wire [31:0] mem_b_din;
     wire [1:0]  mem_size;
 
     // Address decode
@@ -39,7 +40,7 @@ module tinymoa_top (
         .mem_addr (mem_addr),
         .mem_read (mem_read),
         .mem_write(mem_write),
-        .mem_wdata(mem_wdata),
+        .mem_wdata(mem_a_din),
         .mem_size (mem_size),
         .mem_rdata(core_rdata),
         .mem_ready(core_ready),
@@ -48,8 +49,10 @@ module tinymoa_top (
     );
 
     // SRAM scratchpad (512x32 = 2 KB)
-    wire [8:0] sram_word_addr = mem_addr[10:2];
-    reg [31:0] sram_rdata;
+    wire [8:0] sram_a_addr = mem_addr[10:2];
+    reg [31:0] sram_a_dout;
+    wire [8:0] sram_b_addr;
+    reg [31:0] sram_b_dout;
     reg        sram_ready;
 
     // IHP SG13G2 512x32 single-port SRAM macro
@@ -62,10 +65,10 @@ module tinymoa_top (
         .A_MEN      (sram_en),
         .A_WEN      (sram_wen),
         .A_REN      (sram_en && !sram_wen),
-        .A_ADDR     (sram_word_addr),
-        .A_DIN      (mem_wdata),
+        .A_ADDR     (sram_a_addr),
+        .A_DIN      (mem_a_din),
         .A_DLY      (1'b0),
-        .A_DOUT     (sram_rdata),
+        .A_DOUT     (sram_a_dout),
         .A_BM       (32'hFFFFFFFF),
 
         .A_BIST_CLK (1'b0),
@@ -82,10 +85,10 @@ module tinymoa_top (
         .B_MEN      (sram_en),
         .B_WEN      (sram_wen),
         .B_REN      (sram_en && !sram_wen),
-        .B_ADDR     (sram_word_addr),
-        .B_DIN      (mem_wdata),
+        .B_ADDR     (sram_b_addr),
+        .B_DIN      (mem_b_din),
         .B_DLY      (1'b0),
-        .B_DOUT     (sram_rdata),
+        .B_DOUT     (sram_b_dout),
         .B_BM       (32'hFFFFFFFF),
 
         .B_BIST_CLK (1'b0),
@@ -104,10 +107,10 @@ module tinymoa_top (
         .A_MEN      (sram_en),
         .A_WEN      (sram_wen),
         .A_REN      (sram_en && !sram_wen),
-        .A_ADDR     (sram_word_addr),
-        .A_DIN      (mem_wdata),
+        .A_ADDR     (sram_a_addr),
+        .A_DIN      (mem_a_din),
         .A_DLY      (1'b0),
-        .A_DOUT     (sram_rdata),
+        .A_DOUT     (sram_a_dout),
         .A_BM       (32'hFFFFFFFF),
         .A_BIST_CLK (1'b0),
         .A_BIST_EN  (1'b0),
