@@ -56,6 +56,49 @@ module tinymoa_top (
     wire sram_en  = is_sram && (mem_read || mem_write);
     wire sram_wen = is_sram && mem_write;
 
+    // Dual-port
+    RM_IHPSG13_2P_512x32_c2_bm_bist sram (
+        .A_CLK      (clk),
+        .A_MEN      (sram_en),
+        .A_WEN      (sram_wen),
+        .A_REN      (sram_en && !sram_wen),
+        .A_ADDR     (sram_word_addr),
+        .A_DIN      (mem_wdata),
+        .A_DLY      (1'b0),
+        .A_DOUT     (sram_rdata),
+        .A_BM       (32'hFFFFFFFF),
+
+        .A_BIST_CLK (1'b0),
+        .A_BIST_EN  (1'b0),
+        .A_BIST_MEN (1'b0),
+        .A_BIST_WEN (1'b0),
+        .A_BIST_REN (1'b0),
+        .A_BIST_ADDR(9'd0),
+        .A_BIST_DIN (32'd0),
+        .A_BIST_BM  (32'd0),
+
+        // Duplicate Port A for now just to get a working macro for OpenLane.
+        .B_CLK      (clk),
+        .B_MEN      (sram_en),
+        .B_WEN      (sram_wen),
+        .B_REN      (sram_en && !sram_wen),
+        .B_ADDR     (sram_word_addr),
+        .B_DIN      (mem_wdata),
+        .B_DLY      (1'b0),
+        .B_DOUT     (sram_rdata),
+        .B_BM       (32'hFFFFFFFF),
+
+        .B_BIST_CLK (1'b0),
+        .B_BIST_EN  (1'b0),
+        .B_BIST_M   (1'b0),
+        .B_BIST_WEN (1'b0),
+        .B_BIST_REN (1'b0),
+        .B_BIST_ADDR(9'd0),
+        .B_BIST_DIN (32'd0),
+        .B_BIST_BM  (32'd0)
+    );
+
+    /* Single-port
     RM_IHPSG13_1P_512x32_c2_bm_bist sram (
         .A_CLK      (clk),
         .A_MEN      (sram_en),
@@ -75,6 +118,7 @@ module tinymoa_top (
         .A_BIST_DIN (32'd0),
         .A_BIST_BM  (32'd0)
     );
+    */
 
     always @(posedge clk) begin
         sram_ready <= sram_en;
