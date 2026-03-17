@@ -1,3 +1,5 @@
+# Custom PDN configuration for SRAM macro integration
+#
 # Credit goes to Urish:
 # https://github.com/urish/ttihp-sram-test/blob/main/src/pdn_cfg.tcl
 # 
@@ -6,8 +8,6 @@
 # 
 # (*) UPDATE: RM_IHPSG13_1P_512x32_c2_bm_bist requires a hacky fix to move layer 235/4 to 189/4. *DO NOT* delete it.
 #     - https://github.com/IHP-GmbH/IHP-Open-PDK/issues/615
-#
-# Custom PDN configuration for SRAM macro integration
 #
 # The SRAM macro (RM_IHPSG13_1P_1024x8_c2_bm_bist) has power pins
 # (VDD!, VDDARRAY!, VSS!) on Metal4. The default macro PDN grid tries
@@ -48,8 +48,7 @@ foreach vdd $::env(VDD_NETS) gnd $::env(GND_NETS) {
 set_voltage_domain -name CORE -power $::env(VDD_NET) -ground $::env(GND_NET) \
     -secondary_power $secondary
 
-# STDCELL grid
-# Define pins: ONLY export TopMetal1 (Vertical) to prevent TT pre-check failures
+# STDCELL grid exports TopMetal1 (Vertical) ONLY
 define_pdn_grid \
     -name stdcell_grid \
     -starts_with POWER \
@@ -87,30 +86,23 @@ define_pdn_grid \
     -starts_with POWER \
     -halo "$::env(PDN_HORIZONTAL_HALO) $::env(PDN_VERTICAL_HALO)"
 
-# Horizontal stripes (Changed to Metal5 to avoid TopMetal2 forbidden layer)
-# FIX: localized to the macro grid to avoid blocking standard cell power (PDN-0179).
+# Horizontal Metal5 bridge stripes (Localized to macro area)
+# FIX: Add -offset 0.1 to ensure stripes land on the 0.005um manufacturing grid (?)
 add_pdn_stripe \
     -grid macro \
     -layer Metal5 \
     -width $::env(PDN_HWIDTH) \
     -pitch $::env(PDN_HPITCH) \
-    -offset $::env(PDN_HOFFSET) \
+    -offset 0.1 \
     -spacing $::env(PDN_HSPACING) \
     -starts_with POWER
 
-# Connect global TopMetal1 (Vertical) down to local Metal5 (Horizontal) over macro
-# Layers must be listed Bottom-to-Top: Metal5 is below TopMetal1.
+# Connect Vertical TopMetal1 to Horizontal Metal5 (Localized)
 add_pdn_connect \
     -grid macro \
     -layers "Metal5 $::env(PDN_VERTICAL_LAYER)"
 
-# N (North) Orientation
-# Connect SRAM's Vertical Metal4 pins to Horizontal Metal5 stripes
+# North (N) orientation connects vertical Metal4 pins to horizontal Metal5 stripes
 add_pdn_connect \
     -grid macro \
     -layers "Metal4 Metal5"
-
-# R90 Orientation (Reference Only)
-# add_pdn_connect \
-#     -grid macro \
-#     -layers "Metal4 $::env(PDN_VERTICAL_LAYER)"
