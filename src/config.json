@@ -45,7 +45,7 @@
     "RM_IHPSG13_2P_512x32_c2_bm_bist": {
       "instances": {
         "top.sram": {
-          "location": [42, 80],
+          "location": [325.25, 45.88],
           "orientation": "N"
         }
       },
