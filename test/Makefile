@@ -8,12 +8,15 @@ TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
 PROJECT_SOURCES = project.v
 
+MOA_LIB_PATH=$(SRC_DIR)/TinyMOA/src
+MOA_DCIM_LIB_PATH=$(MOA_LIB_PATH)/dcim
+
 ifneq ($(GATES),yes)
 
 # RTL simulation:
 SIM_BUILD       = sim_build/rtl
 COMPILE_ARGS   += -DFUNCTIONAL
-VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
+VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES)) $(wildcard $(MOA_LIB_PATH)/*.v) $(wildcard $(MOA_DCIM_LIB_PATH)/*.v)  
 
 else
 
@@ -37,7 +40,7 @@ endif
 # VERILOG_SOURCES += $(SRC_DIR)/TinyMOA/macro/SRAM_512x32/RM_IHPSG13_1P_core_behavioral_bm_bist.v
 
 # IHP DP SRAM 512x32 models
-VERILOG_SOURCES += $(SRC_DIR)/TinyMOA/macro/SRAM_DP_512x32/RM_IHPSG13_2P_512x32_c2_bm_bist.v
+#VERILOG_SOURCES += $(SRC_DIR)/TinyMOA/macro/SRAM_DP_512x32/RM_IHPSG13_2P_512x32_c2_bm_bist.v <-- commented out, already included in tcm 
 VERILOG_SOURCES += $(SRC_DIR)/TinyMOA/macro/SRAM_DP_512x32/RM_IHPSG13_2P_core_behavioral_bm_bist_ideal.v
 
 # Allow sharing configuration between design and testbench via `include`:
