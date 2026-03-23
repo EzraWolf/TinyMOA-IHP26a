@@ -7,18 +7,20 @@
 `default_nettype none
 
 module tt_um_tinymoa_ihp26a (
+    input  wire       clk,
+    input  wire       nrst,
+    input  wire       ena, // always high, can ignore.
+
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
     input  wire [7:0] uio_in,
     output wire [7:0] uio_out,
-    output wire [7:0] uio_oe,
-    input  wire       ena,
-    input  wire       clk,
-    input  wire       rst_n
+    output wire [7:0] uio_oe
+
 );
     tinymoa_top top (
         .clk    (clk),
-        .rst_n  (rst_n),
+        .nrst   (nrst),
         .ena    (ena),
         .ui_in  (ui_in),
         .uo_out (uo_out),
@@ -26,4 +28,6 @@ module tt_um_tinymoa_ihp26a (
         .uio_out(uio_out),
         .uio_oe (uio_oe)
     );
+
+    wire _unused = ena;
 endmodule

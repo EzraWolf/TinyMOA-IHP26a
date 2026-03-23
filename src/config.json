@@ -32,12 +32,11 @@
   "CLOCK_PORT": "clk",
 
 
-
-
-  
-  "//": "SRAM macro integration",
+  "//": "==================================================",
+  "//": "IHP SRAM macro integration",
+  "//": "TinyMOA refers to it as TCM, however.",
   "MACROS": {
-    "RM_IHPSG13_2P_512x32_c2_bm_bist": {
+    "tinymoa_tcm": {
       "instances": {
         "top.sram": {
           "location": [325.25, 45.88],
@@ -56,7 +55,7 @@
         ]
       },
       "nl": [
-        "dir::TinyMOA/src/memory/sram.v"
+        "dir::TinyMOA/src/tcm.v"
       ],
       "spice": [
         "dir::TinyMOA/macro/SRAM_DP_512x32/RM_IHPSG13_2P_512x32_c2_bm_bist.cdl"
@@ -68,7 +67,7 @@
     "top.sram VPWR VGND VDD! VSS!",
     "top.sram VPWR VGND VDDARRAY! VSS!"
   ],
-  "//": "Custom PDN config: SRAM power pins are on Metal4, need Metal4↔TopMetal1 connection",
+  "//": "Custom PDN config: SRAM power pins are on Metal4, need Metal4<->TopMetal1 connection",
   "PDN_CFG": "dir::pdn_cfg.tcl",
 
   "//": "SRAM GDS has no PR boundary layer; read full GDS instead of blackbox",
@@ -79,8 +78,7 @@
 
   "//": "Blackbox SRAM macros during SPICE extraction for LVS, as the macros are not LVS clean",
   "MAGIC_EXT_ABSTRACT_CELLS": ["RM_IHPSG13_2P_.*"],
-
-
+  "//": "==================================================",
 
 
 
