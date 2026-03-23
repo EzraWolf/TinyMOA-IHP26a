@@ -13,8 +13,7 @@ module tt_um_tinymoa_ihp26a (
 
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
-    input  wire [7:0] uio_in,
-    output wire [7:0] uio_out,
+    input  wire [7:0] uio_io,
     output wire [7:0] uio_oe
 );
     tinymoa_top top (
@@ -22,8 +21,7 @@ module tt_um_tinymoa_ihp26a (
         .nrst   (rst_n),
         .ui_in  (ui_in),
         .uo_out (uo_out),
-        .uio_in (uio_in),
-        .uio_out(uio_out),
+        .uio_io (uio_io),
         .uio_oe (uio_oe)
     );
 
