@@ -30,22 +30,26 @@ module tb_system (
     wire [7:0] ui_in;
     assign ui_in = {dbg_en, par_addr, par_oe, par_we, par_cpu_nrst, par_space, is_parallel};
 
-    // Bidirectional data: cocotb drives uio_in[7:4] for writes
+    // Bidirectional IO bus
+    // cocotb drives par_data_in for writes; DUT drives uio_io when uio_oe is set
     reg  [3:0] par_data_in;
-    wire [7:0] uio_in;
-    assign uio_in = {par_data_in, 4'b0};
+    wire [7:0] uio_io;
+    wire [7:0] uio_oe;
+
+    // When uio_oe bits are high, the DUT is driving. Otherwise, testbench drives.
+    // For simulation, use assign with conditional to model the bidirectional bus.
+    assign uio_io[7:4] = uio_oe[7] ? 4'bz : par_data_in;
+    assign uio_io[3:0] = 4'b0;
 
     // Outputs
     wire [7:0] uo_out;
-    wire [7:0] uio_out;
-    wire [7:0] uio_oe;
 
     // Output decode
     wire       dbg_strobe    = uo_out[0];
     wire       dbg_frame_end = uo_out[1];
     wire       par_rdy       = uo_out[3];
     wire [3:0] par_addr_out  = uo_out[7:4];
-    wire [3:0] par_data_out  = uio_out[7:4];
+    wire [3:0] par_data_out  = uio_io[7:4];
 
     tinymoa_top dut (
         .clk     (clk),
@@ -53,8 +57,7 @@ module tb_system (
         .ena     (1'b1),
         .ui_in   (ui_in),
         .uo_out  (uo_out),
-        .uio_in  (uio_in),
-        .uio_out (uio_out),
+        .uio_io  (uio_io),
         .uio_oe  (uio_oe)
     );
 

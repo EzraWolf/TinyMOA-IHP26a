@@ -228,7 +228,9 @@ async def test_par_dcim_mmio_write_read(dut):
     # Read it back
     result = await par_mmio_read(dut, 2)
     # WEIGHT_BASE is 10 bits, so mask
-    assert (result & 0x3FF) == 0x123, f"WEIGHT_BASE readback: expected 0x123, got 0x{result:08X}"
+    assert (result & 0x3FF) == 0x123, (
+        f"WEIGHT_BASE readback: expected 0x123, got 0x{result:08X}"
+    )
 
 
 @cocotb.test()
@@ -241,12 +243,12 @@ async def test_par_load_tcm_and_cpu_executes(dut):
     #
     # Registers: x4=tp (DCIM base), x10=a0, x11=a1
     program = [
-        rv32i.encode_lui(4, 0x400),        # x4 = 0x400000 (tp = DCIM MMIO base)
-        rv32i.encode_addi(10, 0, 0x1A0),   # x10 = 0x1A0
-        rv32i.encode_sw(4, 10, 0x08),      # SW x10, 0x08(x4) -> WEIGHT_BASE = 0x1A0
-        rv32i.encode_lw(11, 4, 0x08),      # LW x11, 0x08(x4) -> x11 = WEIGHT_BASE
-        rv32i.encode_sw(0, 11, 0x20),      # SW x11, 0x20(x0) -> TCM word 0x20
-        rv32i.encode_beq(0, 0, 0),         # BEQ x0, x0, 0 -> self-loop
+        rv32i.encode_lui(4, 0x400),  # x4 = 0x400000 (tp = DCIM MMIO base)
+        rv32i.encode_addi(10, 0, 0x1A0),  # x10 = 0x1A0
+        rv32i.encode_sw(4, 10, 0x08),  # SW x10, 0x08(x4) -> WEIGHT_BASE = 0x1A0
+        rv32i.encode_lw(11, 4, 0x08),  # LW x11, 0x08(x4) -> x11 = WEIGHT_BASE
+        rv32i.encode_sw(0, 11, 0x20),  # SW x11, 0x20(x0) -> TCM word 0x20
+        rv32i.encode_beq(0, 0, 0),  # BEQ x0, x0, 0 -> self-loop
     ]
 
     # Load program via PAR into code region (auto-increment from word 0)
@@ -275,7 +277,9 @@ async def test_par_load_tcm_and_cpu_executes(dut):
             rd = int(dut.dut.cpu_mem_read.value)
             wr = int(dut.dut.cpu_mem_write.value)
             addr = int(dut.dut.cpu_mem_addr.value)
-            dut._log.info(f"cy{cyc:3d} {sn:<6s} pc={pc} addr=0x{addr:06X} rd={rd} wr={wr} rdy={ready}")
+            dut._log.info(
+                f"cy{cyc:3d} {sn:<6s} pc={pc} addr=0x{addr:06X} rd={rd} wr={wr} rdy={ready}"
+            )
         except Exception:
             dut._log.info(f"cy{cyc:3d} X values")
 
@@ -283,8 +287,8 @@ async def test_par_load_tcm_and_cpu_executes(dut):
     try:
         result = int(dut.dut.tcm.mem[0x20].value)
     except ValueError:
-        pc = int(dut.cpu_pc.value) if hasattr(dut, 'cpu_pc') else "?"
-        state = int(dut.cpu_state.value) if hasattr(dut, 'cpu_state') else "?"
+        pc = int(dut.cpu_pc.value) if hasattr(dut, "cpu_pc") else "?"
+        state = int(dut.cpu_state.value) if hasattr(dut, "cpu_state") else "?"
         assert False, f"TCM[0x20] is X. CPU pc={pc} state={state}"
 
     assert result == 0x1A0, (
