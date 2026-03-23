@@ -1,72 +1,67 @@
-// TinyMOA integration testbench
+// TinyMOA system integration testbench
 //
-// Exposes QSPI flash SPI pins so the cocotb test can implement a
-// behavioral flash model in Python. Also exposes boot_done and
-// cpu_addr for test observability.
-//
-// SPI pin mapping (matches tinymoa.v uio assignments):
-//   spi_flash_cs_n      -> uio_out[3] (output)
-//   spi_clk             -> uio_out[0] (output)
-//   spi_data_to_flash   -> {uio_out[5],uio_out[4],uio_out[2],uio_out[1]} (output)
-//   spi_data_oe         -> {uio_oe[5], uio_oe[4], uio_oe[2], uio_oe[1]}
-//   spi_data_from_flash -> drives uio_in[5,4,2,1] (cocotb drives this)
+// Wraps tinymoa_top with PAR IO signals exposed for cocotb.
+// Also provides internal signal access for verification.
 
 `default_nettype none
 `timescale 1ns / 1ps
 
-module tb_tinymoa (
+module tb_system (
     input clk,
-    input nrst,
-
-    input  [3:0]  spi_data_from_flash,
-    output [3:0]  spi_data_to_flash,
-    output [3:0]  spi_data_oe,
-    output        spi_clk,
-    output        spi_flash_cs_n,
-
-    output        boot_done,
-    output [23:0] cpu_addr
+    input nrst
 );
     `ifdef COCOTB_SIM
     initial begin
-        $dumpfile("tb_tinymoa.fst");
-        $dumpvars(0, tb_tinymoa);
+        $dumpfile("tb_system.fst");
+        $dumpvars(0, tb_system);
         #1;
     end
     `endif
 
-    // Build uio_in from flash SPI data (IO[3:0] -> uio_in[5,4,2,1])
-    wire [7:0] uio_in;
-    assign uio_in[0] = 1'b0;
-    assign uio_in[1] = spi_data_from_flash[0];
-    assign uio_in[2] = spi_data_from_flash[1];
-    assign uio_in[3] = 1'b0;
-    assign uio_in[4] = spi_data_from_flash[2];
-    assign uio_in[5] = spi_data_from_flash[3];
-    assign uio_in[7:6] = 2'b0;
+    // PAR control inputs driven by cocotb
+    reg       is_parallel;
+    reg       par_space;
+    reg       par_cpu_nrst;
+    reg       par_we;
+    reg       par_oe;
+    reg [1:0] par_addr;
+    reg       dbg_en;
 
-    wire [7:0] uo_out;
+    wire [7:0] ui;
+    assign ui = {dbg_en, par_addr, par_oe, par_we, par_cpu_nrst, par_space, is_parallel};
+
+    // Bidirectional data: cocotb drives uio_in[7:4] for writes
+    reg  [3:0] par_data_in;
+    wire [7:0] uio_in;
+    assign uio_in = {par_data_in, 4'b0};
+
+    // Outputs
+    wire [7:0] uo;
     wire [7:0] uio_out;
     wire [7:0] uio_oe;
 
-    tinymoa_top dut_tinymoa (
+    // Output decode
+    wire       dbg_strobe    = uo[0];
+    wire       dbg_frame_end = uo[1];
+    wire       par_rdy       = uo[3];
+    wire [3:0] par_addr_out  = uo[7:4];
+    wire [3:0] par_data_out  = uio_out[7:4];
+
+    tinymoa_top dut (
         .clk     (clk),
         .nrst    (nrst),
-        .ui_in   (8'b0),
-        .uo_out  (uo_out),
+        .ui      (ui),
+        .uo      (uo),
         .uio_in  (uio_in),
         .uio_out (uio_out),
         .uio_oe  (uio_oe)
     );
 
-    // Extract SPI outputs from uio
-    assign spi_clk           = uio_out[0];
-    assign spi_data_to_flash = {uio_out[5], uio_out[4], uio_out[2], uio_out[1]};
-    assign spi_data_oe       = {uio_oe[5],  uio_oe[4],  uio_oe[2],  uio_oe[1]};
-    assign spi_flash_cs_n    = uio_out[3];
-
-    // Internal signal observation
-    assign boot_done = dut_tinymoa.boot_done;
-    assign cpu_addr  = dut_tinymoa.cpu_addr;
+    // Internal signal access for verification
+    wire [2:0]  cpu_state  = dut.dbg_cpu_state;
+    wire [23:0] cpu_pc     = dut.dbg_cpu_pc;
+    wire [31:0] cpu_instr  = dut.dbg_cpu_instr;
+    wire [31:0] alu_result = dut.dbg_alu_result;
+    wire [2:0]  dcim_state = dut.dbg_dcim_state;
 
 endmodule

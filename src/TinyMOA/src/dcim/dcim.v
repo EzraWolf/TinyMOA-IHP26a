@@ -1,7 +1,18 @@
-// TinyMOA 32x32 DCIM Accelerator
+// TinyMOA 32x32 DCIM CORE
+// Based on "DIMC-D" (double-approximate) from ISSCC 2022 (see below).
 //
-// Based on DIMC-D (double-approximate) from ISSCC 2022.
-// Weights stored as 1024 flip-flops (32 columns x 32 bits), cached from TCM.
+// Weights stored as 1024 FFs (32 cols x 32 bits), cached from TCM.
+// Activations streamted from TCM Port B
+// LOAD_WEIGHTS reads each row, distributes 1 bit to each col reg
+
+//
+// Reference: ISSCC 2022, Wang et al.
+// "DIMC: 2219TOPS/W 2569F2/b Digital In-Memory Computing Macro in 28nm Based on Approximate Arithmetic Hardware"
+
+
+
+
+
 // Activations read from TCM Port B bit-serially (1 bit-plane per COMPUTE cycle).
 // Results written back to TCM Port B with hardware signed conversion.
 // All digital, no ADC, no custom-drawn cells, standard cells only.
@@ -28,18 +39,13 @@
 //   Two tinymoa_compressor instances per column cover bits [15:0] and [31:16].
 //   Compressor mode is selected at elaboration time via `define flags:
 //     EXACT_COMPRESSOR, SINGLE_APPROX_COMPRESSOR, or double-approx (default).
-//
-// Hardened macro target: entire module placed as fixed block by OpenLane.
-//
-// Reference: ISSCC 2022, Wang et al.
-// "DIMC: 2219TOPS/W 2569F2/b Digital In-Memory Computing Macro in 28nm Based on Approximate Arithmetic Hardware"
 
 `default_nettype none
 `timescale 1ns / 1ps
 
 module tinymoa_dcim #(
-    parameter ARRAY_DIM = 32, // NxN array (must be 32 for current compressor wiring)
-    parameter ACC_WIDTH = 11  // max value = N*(2^P-1) = 32*15 = 480 < 2^9 so round up to 11 for safety margin
+    parameter ARRAY_DIM = 32, // NxN array
+    parameter ACC_WIDTH = 11  // max value = N*(2^P-1), round up
 )(
     input clk,
     input nrst,
@@ -56,7 +62,10 @@ module tinymoa_dcim #(
     output reg [31:0] mem_wdata,
     output reg        mem_write,
     output reg        mem_read,
-    output reg [9:0]  mem_addr
+    output reg [9:0]  mem_addr,
+
+    // Debug
+    output [2:0] dbg_state
 );
 
     // MMIO config registers are wrote by the CPU before asserting cfg_start
@@ -108,7 +117,7 @@ module tinymoa_dcim #(
         end
     endgenerate
 
-    // FSM state encoding
+    // === FSM state encoding ===
     localparam IDLE         = 3'd0;
     localparam LOAD_WEIGHTS = 3'd1;
     localparam FETCH_ACT    = 3'd2;
@@ -117,13 +126,14 @@ module tinymoa_dcim #(
     localparam DONE         = 3'd5;
 
     reg [2:0] state;
+
+    assign dbg_state = state;
+
     reg [5:0] row_idx;    // dual-use as row counter in LOAD_WEIGHTS and STORE_RESULT
     reg [2:0] bit_plane;  // current bit-plane index (counts down from cfg_precision-1 to 0)
     reg       fetch_wait; // 1-cycle wait flag for FETCH_ACT (data valid on second cycle)
 
-    // ==========================================================================
     // === MMIO block. Runs independently of FSM, always live for CPU polling ===
-    // ==========================================================================
     always @(posedge clk or negedge nrst) begin
         if (!nrst) begin
             cfg_start          <= 1'b0;
@@ -178,7 +188,7 @@ module tinymoa_dcim #(
     wire [31:0] store_word =
         {{15{store_signed[16]}}, store_signed};
 
-    // FSM block
+    // === FSM block ===
     integer i;
     always @(posedge clk or negedge nrst) begin
         if (!nrst) begin

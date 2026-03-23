@@ -75,42 +75,31 @@ def test_dcim_integration():
 
 
 def test_system_integration():
-    run_test(
-        "system",
-        "system",
-        test_type="integration",
-        extra_sources=[
-            "cpu.v",
-            "counter.v",
-            "decoder.v",
-            "registers.v",
-            "alu.v",
-            "tcm.v",
-            "qspi.v",
-            "dcim/dcim.v",
-            "dcim/compressor.v",
-        ],
-    )
+    PROJECT_DIR = Path(__file__).parent.resolve()
+    SRC_DIR = PROJECT_DIR.parent / "src"
+    SIM_BUILD = PROJECT_DIR / "sim_build"
 
+    sources = [
+        str(SRC_DIR / "tinymoa.v"),
+        str(SRC_DIR / "cpu.v"),
+        str(SRC_DIR / "counter.v"),
+        str(SRC_DIR / "decoder.v"),
+        str(SRC_DIR / "registers.v"),
+        str(SRC_DIR / "alu.v"),
+        str(SRC_DIR / "tcm.v"),
+        str(SRC_DIR / "dcim" / "dcim.v"),
+        str(SRC_DIR / "dcim" / "compressor.v"),
+        str(PROJECT_DIR / "integration" / "system" / "tb_system.v"),
+    ]
 
-def test_tinymoa_integration():
-    run_test(
-        "tinymoa",
-        "tinymoa",
-        test_type="integration",
-        extra_sources=[
-            "cpu.v",
-            "counter.v",
-            "decoder.v",
-            "registers.v",
-            "alu.v",
-            "tcm.v",
-            "qspi.v",
-            "dcim/dcim.v",
-            "dcim/compressor.v",
-            "bootloader.v",
-        ],
+    simulator.run(
+        verilog_sources=sources,
+        toplevel="tb_system",
+        module="integration.system.test_system",
+        simulator="icarus",
         defines=["BEHAVIORAL"],
+        sim_build=str(SIM_BUILD / "system"),
+        python_search=[str(PROJECT_DIR)],
     )
 
 

@@ -39,7 +39,6 @@ ARRAY_DIM = 32
 
 
 async def setup(dut):
-    """Start clock and deassert reset."""
     clock = Clock(dut.clk, 10, unit="ns")
     cocotb.start_soon(clock.start())
 
@@ -53,9 +52,8 @@ async def setup(dut):
     dut.tb_mem_raddr.value = 0
 
     dut.nrst.value = 0
-    await ClockCycles(dut.clk, 2)
-    dut.nrst.value = 1
     await ClockCycles(dut.clk, 1)
+    dut.nrst.value = 1
 
 
 async def mmio_write(dut, addr, data):
@@ -98,7 +96,6 @@ async def mem_preload(dut, memory_dict):
     await RisingEdge(dut.clk)
     await Timer(1, units="ns")
     dut.tb_mem_wen.value = 0
-    await ClockCycles(dut.clk, 1)
 
 
 async def mem_read_tb(dut, addr):
@@ -172,7 +169,7 @@ async def reset_default_config(dut):
     assert (await mmio_read(dut, WBASE_ADDR)) == DEFAULT_WEIGHT_BASE
     assert (await mmio_read(dut, ABASE_ADDR)) == DEFAULT_ACT_BASE
     assert (await mmio_read(dut, RBASE_ADDR)) == DEFAULT_RESULT_BASE
-    assert (await mmio_read(dut, SIZE_ADDR)) == DEFAULT_ARRAY_SIZE
+    assert (await mmio_read(dut, SIZE_ADDR)) == ARRAY_DIM
 
 
 @cocotb.test()

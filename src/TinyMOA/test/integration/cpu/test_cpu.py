@@ -1,119 +1,113 @@
 """
-CPU integration tests (tinymoa_cpu + TCM + decoder + ALU + registers).
+CPU integration tests (Task 2.5).
 
-Reset and Boot:
-- reset_pc_zero
-- reset_all_registers_zero
-- first_fetch_reads_tcm_address_zero
+Programs are loaded via QSPI simulation (addr >= 256 region, 12-cycle latency).
+The bootloader copies them into TCM before releasing the CPU.
 
-RV32I End-to-End (instruction in TCM, execute, verify register/memory result):
-- add_two_registers
-- addi_immediate
-- sub_two_registers
-- and_or_xor_registers
-- andi_ori_xori_immediate
-- slt_sltu_registers
-- slti_sltiu_immediate
-- sll_srl_sra_registers
-- slli_srli_srai_immediate
-- lui_loads_upper
-- auipc_adds_pc
-- jal_jumps_and_links
-- jalr_jumps_from_register
-- beq_taken
-- beq_not_taken
-- bne_taken
-- blt_bge_signed
-- bltu_bgeu_unsigned
+Tests here exercise full programs end-to-end: program in QSPI, bootloader loads
+into TCM, CPU runs, results written to TCM data region, Python reads them back.
 
-RV32C End-to-End:
-- c_addi_four_cycles
-- c_li_loads_immediate
-- c_lui_loads_upper
-- c_mv_copies_register
-- c_add_two_registers
-- c_sub_two_registers
-- c_and_or_xor_registers
-- c_slli_srli_srai
-- c_not_inverts
-- c_zext_b_sext_b
-- c_zext_h_sext_h
-- c_mul_16x16_to_32
-- c_j_jumps
-- c_jal_jumps_and_links
-- c_jr_jumps_from_register
-- c_jalr_jumps_and_links_from_register
-- c_beqz_taken
-- c_beqz_not_taken
-- c_bnez_taken
-- c_bnez_not_taken
-- c_addi4spn
-- c_addi16sp
-
-Load/Store Through TCM:
-- lw_sw_round_trip
-- lb_sb_round_trip
-- lh_sh_round_trip
-- lbu_zero_extends
-- lhu_zero_extends
-- lw_sw_all_byte_offsets
-- c_lw_c_sw_round_trip
-- c_lbu_c_sb_round_trip
-- c_lhu_c_lh_c_sh_round_trip
-- store_then_load_same_address
-- store_then_load_adjacent_addresses
-
-Special Registers:
-- gp_reads_as_0x000400
-- tp_reads_as_0x400000
-- gp_relative_load_store
-- tp_relative_load_store
-- x0_write_ignored_in_instruction
-
-Mixed RV32I and RV32C:
-- rv32i_then_rv32c_sequential
-- rv32c_then_rv32i_sequential
-- interleaved_32bit_and_16bit_instructions
-- branch_from_rv32c_to_rv32i
-- branch_from_rv32i_to_rv32c_aligned
-
-Pipeline Hazards:
-- back_to_back_alu_no_stall
-- load_use_stall
-- store_after_alu_no_stall
-- branch_after_alu
-- jal_after_store
-
-Multi-Instruction Sequences:
-- fibonacci_10_terms_rv32i
-- fibonacci_10_terms_rv32c
-- fibonacci_mixed_rv32i_rv32c
-- sum_array_rv32i
-- sum_array_rv32c
-- memcpy_loop_rv32i
-- bubble_sort_4_elements
-- multiply_accumulate_loop
+Helpers are identical to test/unit/cpu/test_cpu.py so behaviour is consistent.
 """
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
+import utility.rv32i_encode as rv32i
+import utility.rv32c_encode as rv32c
+
+NOP = rv32i.encode_addi(0, 0, 0)
+
+# QSPI region starts at word 256 (byte addr 0x400).
+# Bootloader copies from QSPI_BASE to TCM word 0 before releasing CPU.
+QSPI_BASE = 256
 
 
-async def setup(dut):
-    """Initialize the CPU"""
+async def setup(dut, instrs):
     clock = Clock(dut.clk, 10, unit="ns")
     cocotb.start_soon(clock.start())
-
     dut.nrst.value = 0
+
+    for i in range(2048):
+        dut.mem[i].value = 0
+
     await ClockCycles(dut.clk, 1)
     dut.nrst.value = 1
 
+    # Load program into QSPI region (bootloader will copy to TCM)
+    for i, word in enumerate(instrs):
+        dut.mem[QSPI_BASE + i].value = word
 
-@cocotb.test()
-async def test_foo(dut):
-    """Test template"""
-    await setup(dut)
     await ClockCycles(dut.clk, 1)
 
-    raise NotImplementedError("Test not implemented yet")
+
+async def run_until_done(dut, instr_ct, timeout=50000, debug=False):
+    """Wait for instr_ct WB completions."""
+    names = ["FETCH", "DECODE", "EXEC", "MEM", "WB"]
+    total = 0
+    for i in range(instr_ct):
+        count = 0
+        while int(dut.dbg_done.value) == 0:
+            if debug:
+                state = int(dut.dbg_state.value)
+                pc = int(dut.dbg_pc.value)
+                instr = int(dut.dbg_instr.value)
+                alu = int(dut.dbg_alu_result.value)
+                name = names[state] if state < len(names) else f"?{state}"
+                dut._log.info(
+                    f"cy {total:4d}  {name:<6s}  pc={pc}  instr={instr:08x}  alu={alu}"
+                )
+            await ClockCycles(dut.clk, 1)
+            count += 1
+            total += 1
+            if count > timeout:
+                raise TimeoutError(f"timed out waiting for instruction {i}")
+        if debug:
+            pc = int(dut.dbg_pc.value)
+            instr = int(dut.dbg_instr.value)
+            alu = int(dut.dbg_alu_result.value)
+            dut._log.info(
+                f"cy {total:4d}  WB      pc={pc}  instr={instr:08x}  alu={alu}  [instr {i} done]"
+            )
+        await ClockCycles(dut.clk, 1)
+        total += 1
+
+
+@cocotb.test(skip=True)
+async def test_boot_counter(dut):
+    """
+    Boot a counter program from QSPI flash via bootloader.
+
+    Program counts from 0 to N-1, stores result to TCM data region.
+    Exercises: bootloader copy, CPU ALU loop, store to data region.
+
+    Expected: mem[DATA] == N-1 after execution.
+    """
+    pass
+
+
+@cocotb.test(skip=True)
+async def test_bubble_sort(dut):
+    """
+    Boot a bubble sort program from QSPI flash via bootloader.
+
+    Program sorts an array of 8 words (pre-loaded into TCM data region),
+    writes sorted result back in place.
+    Exercises: nested loop, load/store, branch, compare.
+
+    Expected: mem[DATA..DATA+7] is sorted ascending after execution.
+    """
+    pass
+
+
+@cocotb.test(skip=True)
+async def test_memcpy(dut):
+    """
+    Boot a memcpy program from QSPI flash via bootloader.
+
+    Program copies N words from src region to dst region in TCM.
+    Exercises: pointer arithmetic, load/store loop, QSPI latency during boot.
+
+    Expected: mem[DST..DST+N-1] == mem[SRC..SRC+N-1] after execution.
+    """
+    pass

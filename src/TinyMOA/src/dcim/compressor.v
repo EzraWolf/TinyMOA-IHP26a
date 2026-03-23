@@ -1,20 +1,20 @@
 // TinyMOA 16-input popcount compressor with 3 modes:
 //
 // Single approximate compressor (DCIM-S):
-//      1 Level of AND/OR approx, then 8 bits of exact popcount
-//      Output range 0-8
-//      ~40% less transistors than exact
-//      Worst-case RMSE ≈ 4.03%
+//    1 Level of AND/OR approx, then 8 bits of exact popcount
+//    Output range 0-8
+//    ~40% less transistors than exact
+//    Worst-case RMSE ≈ 4.03%
 //
 // Double approximate compressor (DCIM-D):
-//      2 Levels of AND/OR approx, then 4 bits of exact popcount
-//      Output range 0-4
-//      ~55% less transistors than exact
-//      Worst-case RMSE ≈ 6.76%
+//    2 Levels of AND/OR approx, then 4 bits of exact popcount
+//    Output range 0-4
+//    ~55% less transistors than exact
+//    Worst-case RMSE ≈ 6.76%
 //
 // Exact compressor (DCIM-E):
-//      Full 16:5 popcount FA tree
-//      Zero RMSE, maximum transistor cost
+//    Full 16:5 popcount FA tree
+//    Zero RMSE, maximum transistor cost
 //
 // Reference: ISSCC 2022, Wang et al.
 // "DIMC: 2219TOPS/W 2569F2/b Digital In-Memory Computing Macro in 28nm Based on Approximate Arithmetic Hardware"

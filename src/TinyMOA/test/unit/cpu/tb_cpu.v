@@ -27,10 +27,7 @@ module tb_cpu (
 
     localparam LATENCY = 12;
 
-    // --- Storage ---
-    reg [31:0] mem [0:2047];
-
-    // --- CPU bus signals ---
+    reg  [31:0] mem [0:2047];
     wire [23:0] cpu_mem_addr;
     wire        cpu_mem_read;
     wire        cpu_mem_write;
@@ -39,19 +36,17 @@ module tb_cpu (
     reg  [31:0] cpu_mem_rdata;
     reg         cpu_mem_ready;
 
-    // --- QSPI delay counter ---
-    reg [3:0] delay_ct;
+    reg [3:0]  qspi_delay;
     reg        qspi_ready;
     reg [31:0] qspi_rdata;
 
-    // --- Debug wires ---
     wire [2:0]  dbg_state;
     wire        dbg_done;
     wire [23:0] dbg_pc;
     wire [31:0] dbg_instr;
     wire [31:0] dbg_alu_result;
 
-    // --- TCM: combinational ready + rdata (no race) ---
+    // Combinational TCM (ready + rdata) to prevent races
     wire tcm_hit = (cpu_mem_addr < 24'd256);
     wire bus_active = cpu_mem_read || cpu_mem_write;
 
@@ -68,10 +63,10 @@ module tb_cpu (
         end
     end
 
-    // --- Clocked: TCM writes + QSPI delay ---
+    // Clocked TCM writes + simulated QSPI delay
     always @(posedge clk or negedge nrst) begin
         if (!nrst) begin
-            delay_ct   <= 4'd0;
+            qspi_delay <= 4'd0;
             qspi_ready <= 1'b0;
             qspi_rdata <= 32'b0;
         end else begin
@@ -84,23 +79,22 @@ module tb_cpu (
 
             // QSPI delay logic
             if (bus_active && !tcm_hit) begin
-                if (delay_ct == LATENCY - 1) begin
+                if (qspi_delay == LATENCY - 1) begin
                     qspi_ready <= 1'b1;
-                    delay_ct   <= 4'd0;
+                    qspi_delay   <= 4'd0;
                     if (cpu_mem_read)
                         qspi_rdata <= mem[cpu_mem_addr];
                     if (cpu_mem_write)
                         mem[cpu_mem_addr] <= cpu_mem_wdata;
                 end else begin
-                    delay_ct <= delay_ct + 4'd1;
+                    qspi_delay <= qspi_delay + 4'd1;
                 end
             end else begin
-                delay_ct <= 4'd0;
+                qspi_delay <= 4'd0;
             end
         end
     end
 
-    // --- CPU instance ---
     tinymoa_cpu cpu (
         .clk       (clk),
         .nrst      (nrst),
@@ -111,10 +105,17 @@ module tb_cpu (
         .mem_size  (cpu_mem_size),
         .mem_rdata (cpu_mem_rdata),
         .mem_ready (cpu_mem_ready),
-        .dbg_state      (dbg_state),
-        .dbg_done       (dbg_done),
-        .dbg_pc         (dbg_pc),
-        .dbg_instr      (dbg_instr),
-        .dbg_alu_result (dbg_alu_result)
+        .dbg_state          (dbg_state),
+        .dbg_done           (dbg_done),
+        .dbg_pc             (dbg_pc),
+        .dbg_instr          (dbg_instr),
+        .dbg_alu_result     (dbg_alu_result),
+        .dbg_dec_alu_opcode (),
+        .dbg_dec_mem_opcode (),
+        .dbg_dec_rs1        (),
+        .dbg_dec_rs2        (),
+        .dbg_dec_rd         (),
+        .dbg_dec_flags      (),
+        .dbg_branch_taken   ()
     );
 endmodule
