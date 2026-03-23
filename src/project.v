@@ -21,7 +21,6 @@ module tt_um_tinymoa_ihp26a (
     tinymoa_top top (
         .clk    (clk),
         .nrst   (rst_n),
-        .ena    (ena),
         .ui_in  (ui_in),
         .uo_out (uo_out),
         .uio_in (uio_in),
