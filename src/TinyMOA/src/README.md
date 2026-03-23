@@ -1,51 +1,44 @@
-
 # TinyMOA Source
 
-This directory contains the hardware sources for TinyMOA: Verilog modules, LEF snippets, and small helper scripts used to build, simulate, and inspect the processor and the CIM accelerator.
+Verilog sources for TinyMOA. The CPU uses a 4-bit serial datapath and each 32-bit operation takes 8 clock cycles (4 bits/cycle). A `nibble_ct` counter sequences nibbles through the pipeline. Compressed 16-bit instructions complete in 4 cycles.
 
-We use a 4b datapath to save on tile space, thus processing each 32b instruction in 8 cycles. `input [2:0] nibble_counter` is used in most modules to keep track of each cycle, sequencing 4 bits at a time to process and produce a 32b result.
+## Structure
 
-The RISC-V compressed (C) 16b instruction set extension uses 4 cycles per 16b instruction, enabling quicker execution. However, `C.MUL16` produces a 32b value from two 16b inputs, thus taking 8 cycles regardless.
-
-`tinymoa.v` is the top-level module, implementing the full RISC-V CPU (with external QSPI flash/PSRAM interfaces) and the CIM accelerator. The `core.v` module implements a raw RISC-V (`RV32EC`) execution core that wraps sequential 4b datpath into a 32b datapath but intentionally leaves out external memory interfaces for generic usage outside of just TinyTapeout.
-
-*This document is WIP*
-
-## Contents
-
-```python
-src/
-├── alu/            # ALU is split for ease of implementation
-│   ├── alu.v
-│   ├── multiplier.v
-│   └── shifter.v
-├── cim/            # Compute-in-Memory accelerator modules
-│   ├── core.v      # CIM accelerator core
-│   ├── adc.v
-│   ├── cell.v
-│   ├── compressor.v
-│   ├── control.v
-│   ├── corelet.v
-│   └── README.md
-├── memory/         # External TT QSPI flash/PSRAM memory modules
-│   ├── ram.v
-│   ├── flash.v
-│   └── README.md
-├── shared/         # Shared components
-│   ├── uart.v
-│   └── README.md
-├── core.v          # Raw generic 32b CPU execution core w/o memory
-├── counter.v       # PC
-├── registers.v     # RV32E register file
-├── decoder.v       # RV32I, RV32C, and custom instruction decoder
-├── tinymoa.v       # Top-level wrapper for CPU, memory, CIM integration
-└── README.md
 ```
-To build or synthesize for FPGA, follow the instructions in [fpga/README.md](../fpga/README.md) and ensure your local toolchain is set up.
+src/
+├── tinymoa.v        # Top-level wrapper (CPU, TCM, QSPI, DCIM)
+├── cpu.v            # RV32EC pure execution core (no memory)
+├── decoder.v        # RV32I, RV32C decoder
+├── alu.v            # Nibble-serial ALU
+├── registers.v      # RV32E register file
+├── counter.v        # Configurable program/nibble counter
+├── tcm.v            # Tightly Coupled Memory (dual port 512x32 SRAM macro)
+├── qspi.v           # QSPI controller for external flash and PSRAM
+├── bootloader.v     # Bootloader FSM to load program from QSPI flash into TCM
+└── dcim/
+    ├── compressor.v # Approximate Popcount compressor
+    └── dcim.v       # DCIM core
+```
 
-## Where to look next
-- Instruction set: [docs/ISA.md](../docs/ISA.md)
-- CIM architecture and pseudocode: [docs/CIM.md](../docs/CIM.md)
-- FPGA flow: [fpga/README.md](../fpga/README.md)
-- Tests and simulation: [test/README.md](../test/README.md)
-- FPGA flow: [fpga/README.md](../fpga/README.md)
+## Key Modules
+
+| File | Module | Purpose |
+|------|--------|---------|
+| `tinymoa.v` | `tinymoa` | TinyTapeout wrapper; integrates all subsystems |
+| `cpu.v` | `tinymoa_cpu` | 6-stage nibble-serial RISC-V pipeline |
+| `decoder.v` | `tinymoa_decoder` | Decodes RV32I/C instructions to control signals |
+| `alu.v` | `tinymoa_alu` | 4-bit slice ALU; result assembled over 8 cycles |
+| `registers.v` | `tinymoa_registers` | 16x32 register file; gp/tp pseudo-hardwired |
+| `counter.v` | `tinymoa_counter` | PC with nibble-serial increment |
+| `tcm.v` | `tinymoa_tcm` | Wraps IHP `SRAM_DP_512x32` macro; Port A = CPU, Port B = DCIM |
+| `qspi.v` | `tinymoa_qspi` | 4-wire SPI; supports flash XIP and PSRAM read/write |
+| `bootloader.v` | `tinymoa_bootloader` | Copies flash image to TCM on reset |
+| `dcim/dcim.v` | `tinymoa_dcim` | 32x32 XNOR MAC array with FSM control |
+| `dcim/compressor.v` | `tinymoa_compressor` | Per-column popcount; compile-time mode selection |
+
+## See Also
+
+- [docs/ISA.md](../docs/ISA.md) — Instruction encoding and opcode map
+- [docs/CIM.md](../docs/CIM.md) — DCIM architecture, FSM, signed conversion
+- [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) — Module hierarchy and memory map
+- [test/README.md](../test/README.md) — Running tests and waveform viewing

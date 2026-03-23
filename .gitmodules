@@ -1,3 +1,4 @@
 [submodule "src/TinyMOA"]
 	path = src/TinyMOA
 	url = https://github.com/EzraWolf/TinyMOA.git
+	branch = dcim-pivot

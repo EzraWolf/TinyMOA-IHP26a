@@ -1,77 +1,71 @@
-// RV32E (embedded) register file implementation, so 16 registers
-// Using 4b access, the registers are rotated 4 bits each clock cycle
-// Read bit address is one ahead of write bit address, and both increment every clock cycle.
+// TinyMOA Register File
 //
+// 14 storage registers (x0 hardwired 0, gp/tp pseudo-hardcoded via combinational logic).
+// Each register is a 32-bit rotating shift register. Every clock cycle, 4 bits rotate
+// out for read, and 4 bits can be written in. Read is one nibble ahead of write.
+//
+// gp (x3) = 0x000400 — TCM globals midpoint, generated combinationally per nibble.
+// tp (x4) = 0x400000 — DCIM MMIO base, generated combinationally per nibble.
+//
+// IHP SG13G2: no output buffer needed (direct assign). On Sky130A, use buffered output.
+//
+// Credit:
 // https://github.com/MichaelBell/tinyQV/blob/858986b72975157ebf27042779b6caaed164c57b/cpu/register.v
-module tinymoa_register_file #(parameter REG_COUNT = 16) (
+
+`default_nettype none
+`timescale 1ns / 1ps
+
+module tinymoa_registers (
     input clk,
-    // input nrst, // Wasted existance.
+    input nrst,
 
-    input [2:0]  nibble_counter,
+    input  [2:0] nibble_ct,
 
-    input        write_en,
-    input [3:0]  write_dest,  // rd writeback addr (4 bits for RV32E)
-    input [3:0]  data_in,     // data to write to write_dest (rd)
+    input  [3:0] rs1_sel,
+    output [3:0] rs1_nibble,
 
-    input [3:0]  read_addr_a, // rs1 (port A)
-    input [3:0]  read_addr_b, // rs2 (port B)
-    output [3:0] data_port_a,
-    output [3:0] data_port_b,
+    input  [3:0] rs2_sel,
+    output [3:0] rs2_nibble,
 
-    output [23:1] return_addr // $ra register result
+    input        rd_wen,
+    input  [3:0] rd_sel,
+    input  [3:0] rd_nibble
 );
+    wire [3:0] reg_nibble [0:15];
+    assign reg_nibble[0] = 4'h0; // x0 = always zero.
 
-    // x0 hardcoded, so ignore and setup 15 registers (only 13 with storage) for RV32E
-    reg [31:0] registers       [1:REG_COUNT-1];
-    reg  [3:0] register_access [0:REG_COUNT-1];
+    // x3 (gp): pseudo-hardcoded 0x000400
+    // Nibble breakdown: nibble 0=0x0, 1=0x0, 2=0x4, 3=0x0, 4=0x0, 5=0x0
+    assign reg_nibble[3] = (nibble_ct == 3'd2) ? 4'h4 : 4'h0;
+
+    // x4 (tp): pseudo-hardcoded 0x400000
+    // Nibble breakdown: nibble 0=0x0, 1=0x0, 2=0x0, 3=0x0, 4=0x0, 5=0x4
+    assign reg_nibble[4] = (nibble_ct == 3'd5) ? 4'h4 : 4'h0;
 
     genvar i;
     generate
-        for (i = 0; i < REG_COUNT; i = i + 1) begin
-            if (i == 0) begin : gen_reg_x0
-                assign register_access[i] = 4'h0;
-            end else if (i == 3) begin : gen_reg_gp
+        for (i = 1; i < 16; i = i + 1) begin : gen_reg
+            if (i != 3 && i != 4) begin : gen_storage
+                reg [31:0] register;
 
-                // gp (x3) is pseudo-hardcoded to 0x01000400 via combinational logic.
-                // We only see 0x400 since TinyMOA's PC is 24b, not 32b.
-                //    0x01000400 -> 0x000400
-                // 
-                // By pure chance, an appropriate SRAM global offset is also 0x400.
-                // This is the midpoint of the 2KB scratchpad.
-                //
-                // Nibble breakdown:
-                // 0x000400 = 0000_0000_0000_0100_0000_0000
-                // Nibble # =    5    4    3    2    1    0
-                assign register_access[i] = {1'b0, (nibble_counter == 2), 1'b0, (nibble_counter == 6)};
-            end else if (i == 4) begin : gen_reg_tp
-
-                // tp (x4) is pseudo-hardcoded to 0x00400000 via combinational logic
-                // We have to replace the normal 0x08000000 with 0x00400000 to fit in the 24b PC space.
-                //    0x08000000 -> 0x400000
-                //
-                // Nibble breakdown:
-                // 0x400000 = 0100_0000_0000_0000_0000_0000
-                // Nibble # =    5    4    3    2    1    0
-                assign register_access[i] = {1'b0, (nibble_counter == 5), 2'b0};
-            end else begin : gen_reg_normal
+                // Rotate: bottom nibble shifts out, top nibble shifts down
+                // Write: if selected, inject rd_nibble instead of rotating
                 always @(posedge clk) begin
-                    if (write_en && write_dest == i)
-                        registers[i][3:0] <= data_in;
-                    else
-                        registers[i][3:0] <= registers[i][7:4];
+                    if (!nrst) begin
+                        register <= 32'd0;
+                    end else if (rd_wen && rd_sel == i) begin
+                        register <= {register[3:0], register[31:8], rd_nibble};
+                    end else begin
+                        register <= {register[3:0], register[31:8], register[7:4]};
+                    end
                 end
-
-                // Bit rotation logic to handle 4b access to 32b registers.
-                // On SG13G2 no buffer is required, use direct assignment.
-                // On Sky130A, need to use i_regbuf - see TinyQV "SCL_sky130_fd_sc_hd" elsif case for reference.
-                wire [31:4] rotated = {registers[i][3:0], registers[i][31:8]};
-                always @(posedge clk) registers[i][31:4] <= rotated;
-                assign register_access[i] = registers[i][7:4];
+                
+                assign reg_nibble[i] = register[7:4]; // Output the nibble currently rotated to the pos
             end
         end
     endgenerate
 
-    assign data_port_a = register_access[read_addr_a];
-    assign data_port_b = register_access[read_addr_b];
-    assign return_addr = registers[1][31:9];
+    assign rs1_nibble = reg_nibble[rs1_sel];
+    assign rs2_nibble = reg_nibble[rs2_sel];
+
 endmodule

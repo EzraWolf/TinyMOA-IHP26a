@@ -1,10 +1,39 @@
-# Alchitry Cu (iCE40-HX8K-CB132)
-set_io clk P7        # 100 MHz oscillator on Cu
-set_io led[0] J11
-set_io led[1] K11
-set_io led[2] G12
-set_io led[3] H12
-set_io led[4] K14
-set_io led[5] J12
-set_io led[6] L14
-set_io led[7] K12
+# Alchitry Cu V2 (iCE40-HX8K) Pin Configuration
+#
+# NOTE: These pin assignments are BEST-EFFORT estimates based on standard
+# Alchitry IO board pinout. VERIFY AGAINST YOUR ACTUAL IO BOARD LAYOUT!
+
+# On-board 100 MHz oscillator (LVCMOS33, Bank 1)
+set_io clk P7
+
+# IO Board: DIP Switch [3:0] (LVCMOS33, Bank A typically 30s-40s range)
+# These are pull-down inputs reading the switch state
+set_io sw[0] A30
+set_io sw[1] A31
+set_io sw[2] A32
+set_io sw[3] A33
+
+# IO Board: Buttons A-E (LVCMOS33, Bank A/B)
+# Typically momentary switches, pull-up on Cu V2
+set_io btn_a A34
+set_io btn_b A35
+set_io btn_c A36
+set_io btn_d A37
+set_io btn_e A38
+
+# IO Board: 7-Segment Display Multiplexing (LVCMOS33, Bank A/B/C)
+# Digit selects (4 pins, typically active HIGH for common cathode on some boards)
+set_io dig_sel[0] B30
+set_io dig_sel[1] B31
+set_io dig_sel[2] B32
+set_io dig_sel[3] B33
+
+# 7-Segment segments a-g (7 pins)
+# seg[6:0] = {g, f, e, d, c, b, a}
+set_io seg[0] C30  # a
+set_io seg[1] C31  # b
+set_io seg[2] C32  # c
+set_io seg[3] C33  # d
+set_io seg[4] C34  # e
+set_io seg[5] C35  # f
+set_io seg[6] C36  # g

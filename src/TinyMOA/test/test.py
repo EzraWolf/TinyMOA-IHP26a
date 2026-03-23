@@ -8,8 +8,13 @@ from pathlib import Path
 from cocotb_test import simulator
 
 
-def run_unit_test(
-    src_module, test_module, test_type="unit", dir=None, extra_sources=None
+def run_test(
+    src_module,
+    test_module,
+    test_type="unit",
+    dir=None,
+    extra_sources=None,
+    defines=None,
 ):
     """
     Run a standard cocotb unit test using pytest and cocotb-test.
@@ -36,88 +41,109 @@ def run_unit_test(
         toplevel=toplevel,
         module=module,
         simulator="icarus",
+        defines=defines or [],
         sim_build=str(SIM_BUILD / src_module),
         python_search=[str(PROJECT_DIR)],
     )
 
 
-# ALU Unit Tests
-def test_alu():
-    run_unit_test("alu", "alu", dir="alu")
+# === Integration tests ===
 
 
-def test_multiplier():
-    run_unit_test("multiplier", "multiplier", dir="alu")
-
-
-def test_shifter():
-    run_unit_test("shifter", "shifter", dir="alu")
-
-
-# Decoder Unit Tests
-def test_decoder_integration():
-    run_unit_test("decoder", "decoder_integration")
-
-
-def test_decoder_moa():
-    run_unit_test("decoder", "decoder_moa")
-
-
-def test_decoder_rv32c():
-    run_unit_test("decoder", "decoder_rv32c")
-
-
-def test_decoder_rv32i():
-    run_unit_test("decoder", "decoder_rv32i")
-
-
-# Register Unit Tests
-def test_registers():
-    run_unit_test("registers", "registers")
-
-
-def test_counter():
-    run_unit_test("counter", "counter")
-
-
-# CSR Unit Tests
-def test_csr():
-    run_unit_test("csr", "csr")
-
-
-# Integration tests
-# def test_main_design():
-#     run_unit_test("placeholder", "placeholder", test_type="integration")
-
-
-def test_core():
-    run_unit_test(
-        "core",
-        "core",
+def test_cpu_integration():
+    run_test(
+        "cpu",
+        "cpu",
         test_type="integration",
         extra_sources=[
+            "counter.v",
             "decoder.v",
             "registers.v",
-            "alu/alu.v",
-            "alu/shifter.v",
-            "alu/multiplier.v",
+            "alu.v",
         ],
     )
 
 
-def test_core_generic():
-    run_unit_test(
-        "core_generic",
-        "core_generic",
+def test_dcim_integration():
+    run_test(
+        "dcim",
+        "dcim",
+        dir="dcim",
+        test_type="integration",
+        extra_sources=["dcim/compressor.v"],
+    )
+
+
+def test_tinymoa_integration():
+    run_test(
+        "tinymoa",
+        "tinymoa",
         test_type="integration",
         extra_sources=[
+            "cpu.v",
+            "counter.v",
             "decoder.v",
             "registers.v",
-            "alu/alu.v",
-            "alu/shifter.v",
-            "alu/multiplier.v",
+            "alu.v",
+            "tcm.v",
+            "qspi.v",
+            "dcim/dcim.v",
+            "dcim/compressor.v",
+            "bootloader.v",
         ],
+        defines=["BEHAVIORAL"],
     )
+
+
+# === Unit tests ===
+
+
+def test_alu_unit():
+    run_test("alu", "alu", dir="alu")
+
+
+def test_multiplier_unit():
+    run_test("multiplier", "multiplier", dir="alu")
+
+
+def test_shifter_unit():
+    run_test("shifter", "shifter", dir="alu")
+
+
+def test_bootloader_unit():
+    run_test("bootloader", "bootloader")
+
+
+def test_counter_unit():
+    run_test("counter", "counter")
+
+
+def test_cpu_unit():
+    run_test("cpu", "cpu")
+
+
+def test_dcim_unit():
+    run_test("dcim", "dcim", dir="dcim")
+
+
+def test_decoder_rv32c_unit():
+    run_test("decoder", "decoder_rv32c")
+
+
+def test_decoder_rv32i_unit():
+    run_test("decoder", "decoder_rv32i")
+
+
+def test_qspi_unit():
+    run_test("qspi", "qspi")
+
+
+def test_registers_unit():
+    run_test("registers", "registers")
+
+
+def test_tcm_unit():
+    run_test("tcm", "tcm", defines=["BEHAVIORAL"])
 
 
 if __name__ == "__main__":

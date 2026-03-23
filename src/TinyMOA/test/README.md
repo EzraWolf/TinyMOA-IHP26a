@@ -1,33 +1,43 @@
 # TinyMOA Test Suite
 
-Test suite for the TinyMOA compute-in-memory processor using `cocotb`, `cocotb-test`, and `pytest`.
+cocotb + pytest tests. Each 32-bit operation requires 8 clock cycles on the 4-bit datapath; test helpers drive signals using `nibble_ct` accordingly.
 
-Note that we must cycle 8 times for every 32b operation since we run on a 4b datapath (1 nibble). This is why we use `nibble_counter`.
+Credit: adapted from [TinyQV](https://github.com/MichaelBell/tinyQV/tree/858986b72975157ebf27042779b6caaed164c57b/test).
 
-Major credit goes towards [TinyQV](https://github.com/MichaelBell/tinyQV/tree/858986b72975157ebf27042779b6caaed164c57b/test), which much of these tests are build on.
+## Tests
 
-## Structure
+| Test | Description |
+|------|-------------|
+| `integration/cpu` | Full RV32EC program core execution |
+| `integration/dcim` | DCIM weight load, inference, signed output |
+| `integration/tinymoa` | Top-level system program smoke tests |
+| `unit/alu` | ALU ops: add, sub, shifts, logic, compare |
+| `unit/bootloader` | Boot FSM flash-to-TCM load sequence |
+| `unit/counter` | PC increment and reset |
+| `unit/cpu` | CPU unit execution/edge case tests |
+| `unit/dcim` | DCIM unit execution/edge case tests |
+| `unit/decoder` | RV32I and RV32C instruction decoding |
+| `unit/qspi` | QSPI controller command, read/write, etc. |
+| `unit/registers` | Register file write and dual-port read |
+| `unit/tcm` | Dual-port Tightly-Coupled Memory (TCM) read/write serial/parallel |
 
-```python
-test/
-├── integration/     # Full system-wide CPU tests (WIP)
-├── unit/
-│   ├── alu/         # ALU ops (add, sub, slt, sll)
-│   ├── counter/     # Program counter (a type of register)
-│   ├── decoder/     # RV32I, RV32C, and custom instruction decoding
-│   └── registers/   # Register file write and dual-port reading
-└── test.py
-```
-
-## Running Tests
+## Running
 
 ```bash
-cd test
-uv run pytest test.py
+# All tests
+uv run pytest test/test.py
+
+# Single module
+uv run pytest test/test.py::test_alu
 ```
 
-View waveforms with `gtkwave` or `surfer` on the generated `.fst` files in `test/sim_build/`.
+Waveforms are written as `.fst` files to `test/sim_build/`. View with `gtkwave` or `surfer`.
 
-## Dependencies
+## Docs
 
-Install with `pyproject.toml` using `uv sync` (Python 3.12+, cocotb 2.0+, Icarus Verilog).
+| Document | Contents |
+|----------|----------|
+| [Architecture.md](../docs/Architecture.md) | Address map, pipeline, module hierarchy, DCIM MMIO |
+| [ISA.md](../docs/ISA.md) | Full instruction encoding, opcode map |
+| [DCIM.md](../docs/DCIM.md) | XNOR array, compressor modes, FSM, signed conversion, cycle counts |
+| [Bootloader.md](../docs/Bootloader.md) | Boot FSM, flash image layout |

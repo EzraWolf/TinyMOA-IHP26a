@@ -1,71 +1,89 @@
-#  TinyMOA
+# TinyMOA
 
-A minimal RISC-V CPU with a Compute-in-Memory (CIM) accelerator for performing efficient neural network inference using analog matrix multiplications - all built on top of [TinyQV](https://github.com/MichaelBell/tinyQV) by Michael Bell.
+A minimal RISC-V CPU with a Digital Compute-in-Memory (DCIM) accelerator for neural network inference. TinyMOA is built on a 4-bit nibble-serial datapath targeting IHP SG13G2 130nm via [TinyTapeout IHP26a](https://tinytapeout.com/).
 
-TinyMOA is not meant to be a fully general-purpose core and many design decisions are optimized toward the CIM use case: minimal die area, high code density, and tight coupling to the
-crossbar interface.
+The CPU is directly based on [TinyQV](https://github.com/MichaelBell/tinyQV) by [Michael Bell](https://github.com/MichaelBell), and while structurally overhauled to support DCIM and Tighly Coupled Memory (TCM), the serial 4-bit bus architecture, register file design, and pipeline structure are all his work. *TinyMOA would not exist without it.*
+
 
 ## Purpose
 
-Modern GPUs spend most of their power budget *moving data*, not computing. While performant at small scale for graphics rendering, it is increasingly inefficient as model sizes grow for AI/ML or LLM use-cases.
+Because of the von-Neumann bottleneck, modern GPUs spend up to *80%* of their power budget moving data, not computing. As model sizes grow, the memory bandwidth wall becomes the dominant bottleneck as opposed to computational throughput.
 
-Compute-in-Memory (CIM) eliminates this bottleneck by processing data where it is stored, removing the data bus entirely. Similar to your brain, it doesn't separate memory from thought, both are processed in the same place.
+Compute-in-Memory (CIM) eliminates this by processing data where it is stored. TinyMOA implements a *Digital* CIM array: instead of analog crossbars with exotic materials, it uses standard CMOS cells to perform binary XNOR multiply-accumulate operations directly in the memory array. This approach is fully compatible with open-source PDKs and university fabs.
 
-CIM often uses resistive RAM (RRAM) which uses memristors to store continuous (analog) values in the form of conductance like a variable resistor. After loading memory initially, you can use Ohm's law to perform a single matrix-vector multiplication (MVM) near instantaneously.
+Reference: ISSCC 2022, Wang et al. "DCIM: 2219TOPS/W 2569F2/b Digital In-Memory Computing Macro in 28nm Based on Approximate Arithmetic Hardware"
 
-The issue with RRAM is that it requires exotic materials and non-standard fabrication processes that lock it behind expensive, specialized fabs that are out of reach for most researchers.
 
 ### Research Question
 
-Using open-source PDKs, tooling, and fabrication processes, can emulated CMOS 3T1C memristor cells obtain 30-40x the efficiency (GOPS/W) over NVIDIA's H100/H200-class hardware?
+Using open-source PDKs and standard CMOS logic, can a digital CIM array obtain 30-40x the energy efficiency (TOPS/W) over GPU-class hardware on binary/low-precision neural network inference?
 
-If so, this approach could significantly democratize CIM research for students and institutions without access to exotic fabrication processes.
+If so, this significantly lowers the barrier for CIM research at institutions without access to specialized fabrication techniques and methodologized.
 
-
-<!-- TODO: block diagram — CPU -> CIM array -> crossbar -->
-
-<!-- TODO: GOPS/W comparison bar chart vs H100/H200 -->
 
 ## Architecture
 
 ### CPU Core
 
-The RISC-V core is directly based on [TinyQV](https://github.com/MichaelBell/tinyQV) by [Michael Bell](https://github.com/MichaelBell). TinyQV is a RV32EC SoC designed for [Tiny Tapeout](https://tinytapeout.com/), built to fit a working RISC-V core in the smallest possible silicon area. The serial 4-bit bus architecture, register file design, and pipeline structure are all his work. *TinyMOA would not exist without any of it*.
+RV32EC, nibble-serial, 6-state pipeline:
 
-The original additions in TinyMOA are test-suite alterations, incrementally restructured instruction decoder, the MOA custom instruction extensions, the CIM hardware interface, and the memristor crossbar array.
+`FETCH -> DECODE -> EXECUTE -> WRITEBACK -> MEM -> LOAD_WB`
 
-### Why RV32EC?
+Registers are read and written 4 bits per clock cycle; a full 32-bit operation completes in 8 cycles. Compressed 16-bit instructions complete in 4 cycles (except C.MUL which needs 8).
 
 | Choice | Reason |
 |--------|--------|
-| RV32 | 32-bit RISC-V is the smallest ISA with mature C compiler support (GCC, LLVM) |
-| E (Embedded) | Cuts the register file from 32 to 16 registers, saving die/routing space |
-| C (Compressed) | 16-bit instructions for common operations. Doubles code density and halves execution time |
+| RV32 | Smallest ISA with mature C compiler support (GCC, LLVM) |
+| E (Embedded) | 16 registers instead of 32 for smaller area |
+| C (Compressed) | 16-bit instructions double code density and halve fetch bandwidth |
 
-## Extensions Over Base RV32EC
+### ISA
 
-| Extension | Description |
-|-----------|-------------|
-| MOA.V | 8 custom 32-bit instructions to load, configure, and fire the CIM array |
-| C.MUL16 | 16x16 -> 32-bit multiply in a single compressed instruction |
-| C.LWTP, C.SWTP | Fast load/store through the thread pointer peripheral window |
-| C.SCXT, C.LCXT | Single-instruction save/restore of all compressed registers (x8-15) |
-| Zcb | Byte-wise common operations |
-| Zicsr | CSR read/write for hardware configuration |
-| Zicond | Conditional zeroing without branches |
+| Extension    | Notes |
+|--------------|-------|
+| RV32I (base) | Fully implemented |
+| E (embedded) | 16 registers instead of 32 (x0–x15) |
+| C (compresseD) / Zca | Full Q0, Q1, Q2 |
+| Zcb    | Byte ops + C.MUL (16x16 -> 32-bit) |
+| Zicond | Full: `czero.eqz`, `czero.nez` |
+| Zicsr  | Not implemented |
+| M (multiply) | Not implemented - opcodes reserved, C.MUL covers the common case |
+| F (float) | Not implemented - opcodes reserved |
 
-### Why a 4-bit Serial Bus?
+### DCIM Accelerator
 
-Instead of 32-bit parallel internal buses, registers are read and written *4 bits per clock cycle*, completing a full 32-bit operation every 8 cycles. However, compressed 16-bit instructions take 4 cycles to complete except for `C.MUL16` which produces a 32-bit value from 16-bit inputs.
+A 32x32 array of binary XNOR MAC units, controlled entirely via 6 MMIO registers at `0x400000`. The CPU configures and polls the DCIM with ordinary loads and stores so that no custom instructions are necessary.
 
-This tradeoff sacrifices latency for a dramatic reduction in routing width and flip-flop count which allows any of this to fit in a small area such as TinyTapeout.
+| Property | Value |
+|----------|-------|
+| Array | 32x32 XNOR MACs |
+| Activation precision | 1, 2, or 4 bits (bit-serial) |
+| Compressor | Double-approx (default), single-approx, or exact (set by compile-time flag) |
+| Weight storage | 1024 flip-flops (32 cols x 32 bits); loaded from TCM at runtime |
+| Signed output | Hardware bias correction: `2 * acc - N*(2^P−1)` |
+| Control | MMIO polling; no interrupts |
+
+### Memory
+
+The internal TCM has two ports: Port A for the CPU/Bootloader, Port B DCIM.
+
+| Byte Range            | Target |
+|-----------------------|--------|
+| `0x000000 - 0x0007FF` | TCM (2 KB, 512x32) |
+| `0x000800 - 0x000FFF` | Reserved (future TCM) |
+| `0x001000 - 0x3FFFFF` | QSPI Flash |
+| `0x400000 - 0x400017` | DCIM MMIO (6 regs) |
+| `0x800000 - 0xBFFFFF` | QSPI PSRAM A |
+| `0xC00000 - 0xFFFFFF` | QSPI PSRAM B |
+
 
 ## Documentation
 
-- [ISA Reference](./docs/ISA.md) — instruction encoding, custom extensions, full opcode map
-- [CIM Architecture](./docs/CIM.md) — crossbar hardware, control signals, weight loading, inference pseudocode
-- [Doc Index & Quick Reference](./docs/README.md) — register table, format cheatsheet, what's in/out
+All design documents live in [`docs/`](docs/):
 
-## Status
-
-Work in progress.
+| Document | Contents |
+|----------|----------|
+| [Architecture.md](docs/Architecture.md) | Address map, pipeline, module hierarchy, DCIM MMIO |
+| [ISA.md](docs/ISA.md) | Full instruction encoding, opcode map |
+| [DCIM.md](docs/DCIM.md) | XNOR array, compressor modes, FSM, signed conversion, cycle counts |
+| [Bootloader.md](docs/Bootloader.md) | Boot FSM, flash image layout |

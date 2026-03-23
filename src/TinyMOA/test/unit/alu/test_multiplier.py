@@ -1,151 +1,174 @@
-"""Test suite for tinymoa_multiplier."""
+"""
+Test suite for tinymoa_multiplier (pipelined signed 16x16->32 multiplier).
+TB wraps nibble_ct internally; exposes 32-bit product after 9 clock cycles.
+- positive_times_positive
+- negative_times_positive
+- positive_times_negative
+- negative_times_negative
+- zero_times_n
+- n_times_zero
+- max_times_max
+- min_times_min
+- min_times_max
+- one_identity
+- minus_one_negate
+- random_stress
+"""
 
+import random
 import cocotb
-import numpy as np
-from numpy import random
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import ClockCycles, RisingEdge
 
 
-async def setup_multiplier(dut):
-    """Initialize multiplier with clock and reset."""
-    clock = Clock(dut.clk, 4, unit="ns")
+def to_signed32(v):
+    """Interpret a raw 32-bit unsigned DUT output as signed."""
+    v = v & 0xFFFFFFFF
+    return v if v < 0x80000000 else v - 0x100000000
+
+
+async def setup(dut):
+    clock = Clock(dut.clk, 10, unit="ns")
     cocotb.start_soon(clock.start())
-
     dut.nrst.value = 0
     dut.a_in.value = 0
     dut.b_in.value = 0
+    dut.product.value = 0
     await ClockCycles(dut.clk, 1)
     dut.nrst.value = 1
 
-    return dut
+
+async def multiply(dut, a, b):
+    """Drive a and b (Python ints, signed 16-bit range), wait 9 cycles, return signed 32-bit product."""
+    dut.a_in.value = a & 0xFFFF
+    dut.b_in.value = b & 0xFFFF
+    await RisingEdge(dut.clk)
+    await ClockCycles(dut.clk, 9)
+    return to_signed32(int(dut.product.value))
+
+
+# === Boundary cases ===
 
 
 @cocotb.test()
-async def test_multiplication(dut):
-    await setup_multiplier(dut)
+async def positive_times_positive(dut):
+    """Two positive operands produce a positive product"""
+    await setup(dut)
+    a = random.randint(1, 0x7FFF)
+    b = random.randint(1, 0x7FFF)
+    result = await multiply(dut, a, b)
+    expected = a * b
+    assert result == expected, f"{a} * {b}: expected {expected}, got {result}"
 
-    a = random.randint(0, 0xFFFF)
-    b = random.randint(0, 0xFFFF)
-    dut.a_in.value = a
-    dut.b_in.value = b
-    await ClockCycles(dut.clk, 1)
 
-    for _ in range(100):
-        await ClockCycles(dut.clk, 7)
+@cocotb.test()
+async def negative_times_positive(dut):
+    """Negative * positive = negative product"""
+    await setup(dut)
+    a = random.randint(-32768, -1)
+    b = random.randint(1, 0x7FFF)
+    result = await multiply(dut, a, b)
+    expected = a * b
+    assert result == expected, f"{a} * {b}: expected {expected}, got {result}"
+
+
+@cocotb.test()
+async def positive_times_negative(dut):
+    """Positive * negative = negative product"""
+    await setup(dut)
+    a = random.randint(1, 0x7FFF)
+    b = random.randint(-32768, -1)
+    result = await multiply(dut, a, b)
+    expected = a * b
+    assert result == expected, f"{a} * {b}: expected {expected}, got {result}"
+
+
+@cocotb.test()
+async def negative_times_negative(dut):
+    """Negative * negative = positive product"""
+    await setup(dut)
+    a = random.randint(-32768, -1)
+    b = random.randint(-32768, -1)
+    result = await multiply(dut, a, b)
+    expected = a * b
+    assert result > 0, f"{a} * {b}: expected positive, got {result}"
+    assert result == expected, f"{a} * {b}: expected {expected}, got {result}"
+
+
+@cocotb.test()
+async def zero_times_n(dut):
+    """0 * n = 0 for any n"""
+    await setup(dut)
+    b = random.randint(-32768, 32767)
+    result = await multiply(dut, 0, b)
+    assert result == 0, f"0 * {b}: expected 0, got {result}"
+
+
+@cocotb.test()
+async def n_times_zero(dut):
+    """n * 0 = 0 for any n"""
+    await setup(dut)
+    a = random.randint(-32768, 32767)
+    result = await multiply(dut, a, 0)
+    assert result == 0, f"{a} * 0: expected 0, got {result}"
+
+
+@cocotb.test()
+async def max_times_max(dut):
+    """0x7FFF * 0x7FFF = 1,073,676,289"""
+    await setup(dut)
+    result = await multiply(dut, 0x7FFF, 0x7FFF)
+    expected = 32767 * 32767
+    assert result == expected, f"max*max: expected {expected}, got {result}"
+
+
+@cocotb.test()
+async def min_times_min(dut):
+    """-32768 * -32768 = +1,073,741,824 (0x40000000, fits in signed 32-bit)"""
+    await setup(dut)
+    result = await multiply(dut, -32768, -32768)
+    expected = (-32768) * (-32768)
+    assert result == expected, f"min*min: expected {expected}, got {result}"
+
+
+@cocotb.test()
+async def min_times_max(dut):
+    """-32768 * 32767 = most negative product (-1,073,709,056)"""
+    await setup(dut)
+    result = await multiply(dut, -32768, 0x7FFF)
+    expected = (-32768) * 32767
+    assert result == expected, f"min*max: expected {expected}, got {result}"
+
+
+@cocotb.test()
+async def one_identity(dut):
+    """n * 1 = n (multiplicative identity)"""
+    await setup(dut)
+    a = random.randint(-32768, 32767)
+    result = await multiply(dut, a, 1)
+    assert result == a, f"{a} * 1: expected {a}, got {result}"
+
+
+@cocotb.test()
+async def minus_one_negate(dut):
+    """n * -1 = -n"""
+    await setup(dut)
+    a = random.randint(-32768, 32767)
+    result = await multiply(dut, a, -1)
+    expected = -a
+    assert result == expected, f"{a} * -1: expected {expected}, got {result}"
+
+
+# === Random stress ===
+
+
+@cocotb.test()
+async def random_stress(dut):
+    """200 random signed 16-bit pairs verified against Python reference"""
+    await setup(dut)
+    for _ in range(200):
+        a = random.randint(-32768, 32767)
+        b = random.randint(-32768, 32767)
+        result = await multiply(dut, a, b)
         expected = a * b
-
-        # Load next values
-        a = random.randint(0, 0xFFFF)
-        b = random.randint(0, 0xFFFF)
-        dut.a_in.value = a
-        dut.b_in.value = b
-        await ClockCycles(dut.clk, 1)
-
-        result = int(dut.result.value)
-        assert result == expected, f"Expected 0x{expected:X}, got 0x{result:X}"
-
-
-@cocotb.test()
-async def test_zero_multiplication(dut):
-    """Test that 0 * anything = 0."""
-    await setup_multiplier(dut)
-
-    for _ in range(50):
-        b = random.randint(0, 0xFFFF)
-        dut.a_in.value = 0
-        dut.b_in.value = b
-        await ClockCycles(dut.clk, 8)
-        result = int(dut.result.value)
-        assert result == 0, f"0 * {b}: got {result:X}, expected 0"
-
-    for _ in range(50):
-        a = random.randint(0, 0xFFFF)
-        dut.a_in.value = a
-        dut.b_in.value = 0
-        await ClockCycles(dut.clk, 8)
-        result = int(dut.result.value)
-        assert result == 0, f"{a} * 0: got {result:X}, expected 0"
-
-
-@cocotb.test()
-async def test_one_multiplication(dut):
-    """Test multiplication by 1."""
-    await setup_multiplier(dut)
-
-    for _ in range(50):
-        b = random.randint(0, 0xFFFF)
-        dut.a_in.value = 1
-        dut.b_in.value = b
-        await ClockCycles(dut.clk, 8)
-        result = int(dut.result.value)
-        assert result == b, f"1 * {b}: got {result:X}, expected {b:X}"
-
-    for _ in range(50):
-        a = random.randint(0, 0xFFFF)
-        dut.a_in.value = a
-        dut.b_in.value = 1
-        await ClockCycles(dut.clk, 8)
-        result = int(dut.result.value)
-        assert result == a, f"{a} * 1: got {result:X}, expected {a:X}"
-
-
-@cocotb.test()
-async def test_matrix_vector_multiply(dut):
-    """Test simple 2x2 8b matrix-vector multiplication."""
-    await setup_multiplier(dut)
-
-    # Because many of us forgot linear algebra.
-    # Matrix: [[2, 3], [4, 5]]
-    # Vector: [7, 11]
-    # Result: [2*7 + 3*11, 4*7 + 5*11] = [47, 83]
-
-    A = [
-        [random.randint(0, 0xFF), random.randint(0, 0xFF)],
-        [random.randint(0, 0xFF), random.randint(0, 0xFF)],
-    ]
-
-    B = [random.randint(0, 0xFF), random.randint(0, 0xFF)]
-
-    result_vec = []
-    for row in A:
-        accumulator = 0
-        for mat_val, vec_val in zip(row, B):
-            dut.a_in.value = int(mat_val)
-            dut.b_in.value = int(vec_val)
-            await ClockCycles(dut.clk, 8)
-            product = int(dut.result.value)
-            accumulator += product
-        result_vec.append(accumulator)
-
-    expected = np.dot(A, B).tolist()
-    assert result_vec == expected, f"MVM: got {result_vec}, expected {expected}"
-
-
-@cocotb.test()
-async def test_matrix_matrix_multiply(dut):
-    """Test simple 4x4 matrix-matrix multiplication."""
-    await setup_multiplier(dut)
-
-    # Matrix A: [[1, 2], [3, 4]]
-    # Matrix B: [[5, 6], [7, 8]]
-    # Result C: [[1*5+2*7, 1*6+2*8], [3*5+4*7, 3*6+4*8]] = [[19, 22], [43, 50]]
-
-    A = [[1, 2], [3, 4]]
-    B = [[5, 6], [7, 8]]
-
-    result = [[0, 0], [0, 0]]
-
-    for i in range(2):
-        for j in range(2):
-            accumulator = 0
-            for k in range(2):
-                dut.a_in.value = A[i][k]
-                dut.b_in.value = B[k][j]
-                await ClockCycles(dut.clk, 8)
-                product = int(dut.result.value)
-                accumulator += product
-            result[i][j] = accumulator
-
-    expected = np.dot(A, B).tolist()
-    assert result == expected, f"MMM: got {result}, expected {expected}"
+        assert result == expected, f"{a} * {b}: expected {expected}, got {result}"

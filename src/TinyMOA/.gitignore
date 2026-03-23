@@ -2,9 +2,14 @@
 # General
 .DS_Store
 *.bin
-# *.hex # We test program.hex files
+*.hex
 *.map
 *.o
+CLAUDE.md
+.claude/
+.vscode/
+.idea/
+.mypy_cache/
 
 # Python
 __pycache__/
@@ -22,3 +27,12 @@ top*.json
 *.blif
 *.asc
 sim_build/
+results.xml
+*.fst
+*.fst.hier
+*.vcd
+*.ghw
+
+# Coverage
+.coverage
+htmlcov/

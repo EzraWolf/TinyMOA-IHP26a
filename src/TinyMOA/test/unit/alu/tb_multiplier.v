@@ -1,3 +1,7 @@
+// Multiplier test bench
+// Wraps tinymoa_multiplier: drives nibble_ct internally and assembles
+// the nibble-serial output into a 32-bit product register.
+// After loading a_in/b_in, wait 9 clocks (1 pipeline + 8 nibble reads).
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -6,11 +10,11 @@ module tb_multiplier (
     input clk,
     input nrst,
 
-    input [31:0] a_in,
+    input [15:0] a_in,
     input [15:0] b_in,
-    output reg [31:0] result
-);
 
+    output reg [31:0] product
+);
     `ifdef COCOTB_SIM
     initial begin
         $dumpfile("tb_multiplier.fst");
@@ -19,29 +23,26 @@ module tb_multiplier (
     end
     `endif
 
-    // Cycles through nibbles: 0, 4, 8, 12, 16, 20, 24, 28, 0, ...
-    reg [4:0] nibble_counter;
-    
-    wire [3:0] product_nibble;
-    
-    always @(posedge clk) begin
-        if (!nrst) begin
-            nibble_counter <= 0;
-            result <= 0;
-        end else begin
-            nibble_counter <= nibble_counter + 4;
-            result[nibble_counter +: 4] <= product_nibble;
-        end
-    end
+    reg [2:0] nibble_ct;
 
-    tinymoa_multiplier #(
-        .B_IN_WIDTH(16)
-    ) dut_multiplier (
-        .clk(clk),
-        .nrst(nrst),
-        .a_in(a_in[nibble_counter +: 4]),
-        .b_in(b_in),
-        .product(product_nibble)
+    always @(posedge clk)
+        if (!nrst) nibble_ct <= 0;
+        else       nibble_ct <= nibble_ct + 1;
+
+    wire [3:0] result;
+
+    tinymoa_multiplier dut_multiplier (
+        .clk      (clk),
+        .a_in     (a_in),
+        .b_in     (b_in),
+        .nibble_ct(nibble_ct),
+        .result   (result)
     );
+
+    // Assemble nibble-serial output into full product word.
+    // After 9 clocks from stable inputs, all 8 nibble positions have been
+    // written with the current product regardless of nibble_ct phase.
+    always @(posedge clk)
+        product[nibble_ct*4 +: 4] <= result;
 
 endmodule

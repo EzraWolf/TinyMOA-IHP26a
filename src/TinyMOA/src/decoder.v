@@ -1,467 +1,340 @@
-/*. Instruction decoder based on TinyQV
-    https://github.com/MichaelBell/tinyQV/blob/858986b72975157ebf27042779b6caaed164c57b/cpu/decode.v
+// TinyMOA Combinational Instruction Decoder
+//
+// Decodes RV32I, C/Zca, Zcb, and Zicond from a 32-bit word.
+// 16-bit compressed instructions arrive zero-extended to 32 bits.
+//
+// Compressed register fields (3-bit) map to x8-x15: rd = {1'b1, instr[N:M]}.
+// C.MUL: Q1 CA-type (instr[15:13]=100, instr[12:10]=111, instr[6:5]=10), ALU opcode 4'b1010.
 
-    32-bit ALU instructions (opcode in bits [6:2])
-    Part of the RV32E base instruction set.
-    E stands for "embedded", meaning we only use registers x0-x15 instead of x0-x31
-    The RV32E base ISA is compatible with all extensions as of Feb. 2026
-    https://ww1.microchip.com/downloads/aemDocuments/documents/FPGA/ProductDocuments/UserGuides/ip_cores/directcores/riscvspec.pdf
+`default_nettype none
+`timescale 1ns / 1ps
 
-    opcode[6:2]
-
-    - ADD   01100, 000, 0
-    - ADDI  00100, 000, -
-    - SUB   01100, 000, 1
-    - SLT   01100, 010, 0
-    - SLTI  00100, 010, -
-    - SLTU  01100, 011, 0
-    - SLTIU 00100, 011, -
-    - AND   01100, 111, 0
-    - ANDI  00100, 111, -
-    - OR    01100, 110, 0
-    - ORI   00100, 110, -
-    - XOR   01100, 100, 0
-    - XORI  00100, 100, -
-    - SLL   01100, 001, 0
-    - SLLI  00100, 001, -
-    - SRL   01100, 101, 0
-    - SRLI  00100, 101, -
-    - SRA   01100, 101, 1
-    - SRAI  00100, 101, -
-
-
-
-
-    16-bit instructions
-    Organized into 3 quadrants based on bits [1:0]
-
-    Quadrant 0 (bits [1:0] == 00)
-    C.ADDI4SPN
-
-    C.LW
-    C.SW
-
-    C.LBU
-    C.LHU
-    C.LH
-    C.SB
-    C.SH
-
-    C.SCXT
-
-
-
-    Quadrant 1 (bits [1:0] == 01)
-    C.ADDI16SP  CI
-
-    C.ADDI      CI
-    C.LI        CI
-    C.LUI       CI
-    C.SRLI      CB
-    C.SRAI      CB 
-    C.ANDI      CB
-    C.SUB       CR
-    C.XOR       CR
-    C.OR        CR
-    C.AND       CR
-    C.NOT       CZEXT
-    C.ZEXT.B    CZEXT
-    C.ZEXT.H    CZEXT
-
-    C.JAL       CJ
-    C.J         CJ
-    C.BEQZ      CB
-    C.BNEZ      CB
-
-
-
-    Quadrant 2 (bits [1:0] == 10)
-    C.LWSP      CI
-    C.SWSP      CSS
-    C.LWTP      CLWTP
-    C.SWTP      CLWTP
-
-    C.MV        CR
-    C.ADD       CR
-    C.SLLI      CI
-    C.MUL16     CR
-
-    C.JR        CR
-    C.JALR      CR
-
-    C.EBREAK    CR
-
-    C.LCXT      CLCXT
-
-
-
-    Quadrant 3 is does not exist, it is just 32b instructions.
-*/
-
-module tinymoa_decoder #(parameter REG_ADDR_WIDTH = 4) (
+module tinymoa_decoder (
     input [31:0] instr,
 
-    output reg [31:0] imm,
+    output reg  [31:0] imm,
+    output reg  [3:0]  alu_opcode,
+    output reg  [2:0]  mem_opcode, // [1:0]=size, [2]=unsigned
+    output reg  [3:0]  rs1,
+    output reg  [3:0]  rs2,
+    output reg  [3:0]  rd,
 
-    // Data movement instructions
-    output reg is_load,
-    output reg is_store,
-    output reg is_lui,
-
-    // ALU instructions
-    output reg is_alu_reg,
-    output reg is_alu_imm,
-
-    // Branch instructions
-    output reg is_branch,
-    output reg is_jal,
-    output reg is_jalr,
-    output reg is_ret,
-
-    // System instruction
-    output reg is_system,
-
-    output reg is_auipc,
-
-    output reg is_compressed,
-
-    output [2:1] instr_len,
-
-    output reg [3:0] alu_opcode,
-    output reg [2:0] mem_opcode, // Bit 0 means branch condition is reversed
-
-    output reg [REG_ADDR_WIDTH-1:0] read_addr_a, // rs1 (port A)
-    output reg [REG_ADDR_WIDTH-1:0] read_addr_b, // rs2 (port B)
-    output reg [REG_ADDR_WIDTH-1:0] write_dest,
-
-    output reg [2:0] additional_mem_opcode,
-    output reg mem_op_increment_reg
+    output reg         is_load,
+    output reg         is_store,
+    output reg         is_branch,
+    output reg         is_jal,
+    output reg         is_jalr,
+    output reg         is_lui,
+    output reg         is_auipc,
+    output reg         is_alu_reg,
+    output reg         is_alu_imm,
+    output reg         is_system,
+    output reg         is_compressed
 );
 
-    assign instr_len = (instr[1:0] == 2'b11) ? 2'b10 : 2'b01;
+    // 32-bit fields
+    wire [4:0] opcode5 = instr[6:2];   // bits[1:0] == 2'b11 for all 32-bit insns
+    wire [2:0] funct3  = instr[14:12];
+    wire [6:0] funct7  = instr[31:25];
+    wire [3:0] rs1_32  = instr[18:15]; // RV32E: only x0-x15 (4 bits)
+    wire [3:0] rs2_32  = instr[23:20];
+    wire [3:0] rd_32   = instr[10:7];
 
-    // 32b base immediates
-    wire [31:0] u_imm = {    instr[31],   instr[30:12], {12{1'b0}}};
-    wire [31:0] i_imm = {{21{instr[31]}}, instr[30:20]};
-    wire [31:0] s_imm = {{21{instr[31]}}, instr[30:25],instr[11:7]};
-    wire [31:0] b_imm = {{20{instr[31]}}, instr[7],instr[30:25],instr[11:8],1'b0};
-    wire [31:0] j_imm = {{12{instr[31]}}, instr[19:12],instr[20],instr[30:21],1'b0};
+    // 16-bit compressed fields
+    wire [1:0] c_quad  = instr[1:0];
+    wire [2:0] c_f3    = instr[15:13];
 
-    // TODO: Convert to purely 16b so go from 8 cycles/instruction to 4 cycles.
-    // 16b compressed immediates
-    wire [31:0] c_lwsp_imm     = {24'b0, instr[3:2], instr[12], instr[6:4], 2'b00};
-    wire [31:0] c_swsp_imm     = {24'b0, instr[8:7], instr[12:9], 2'b00};
-    wire [31:0] c_lsw_imm      = {25'b0, instr[5], instr[12:10], instr[6], 2'b00};  // LW and SW
-    wire [31:0] c_lsh_imm      = {30'b0, instr[5], 1'b0};  // LH(U) and SH
-    wire [31:0] c_lsb_imm      = {30'b0, instr[5], instr[6]};  // LBU and SB
-    wire [31:0] c_j_imm        = {{21{instr[12]}}, instr[8], instr[10:9], instr[6], instr[7], instr[2], instr[11], instr[5:3], 1'b0};
-    wire [31:0] c_b_imm        = {{24{instr[12]}}, instr[6:5], instr[2], instr[11:10], instr[4:3], 1'b0};
-    wire [31:0] c_alu_imm      = {{27{instr[12]}}, instr[6:2]};          // ADDI, LI, shifts, ANDI
-    wire [31:0] c_lui_imm      = {{15{instr[12]}}, instr[6:2], 12'b0};
-    wire [31:0] c_addi16sp_imm = {{23{instr[12]}}, instr[4:3], instr[5], instr[2], instr[6], 4'b0};
-    wire [31:0] c_addi4sp_imm  = {22'b0, instr[10:7], instr[12:11], instr[5], instr[6], 2'b0};
-    wire [31:0] c_scxt_imm     = {{23{instr[12]}}, instr[9:7], instr[10], instr[11], 4'b0};
+    // Compressed register fields (prime registers: x8-x15)
+    wire [3:0] c_rd_p  = {1'b1, instr[4:2]};
+    wire [3:0] c_rs1_p = {1'b1, instr[9:7]};
+    wire [3:0] c_rs2_p = {1'b1, instr[4:2]};
 
-    // Quadrant detection for compressed instructions
-    wire [1:0] c_quadrant = instr[1:0];
-    wire [2:0] c_funct3 = instr[15:13];
-    
+    // Full register fields for non-prime compressed (4-bit RV32E: bits[10:7])
+    wire [3:0] c_rd_f  = instr[10:7];
+    wire [3:0] c_rs1_f = instr[10:7];
+    wire [3:0] c_rs2_f = instr[5:2];
+
     always @(*) begin
-        additional_mem_opcode = 3'b000;
-        mem_op_increment_reg = 1;
-        is_ret = 0;
-        is_compressed = 0;
+        imm           = 32'd0;
+        alu_opcode    = 4'd0;
+        mem_opcode    = 3'd0;
+        rs1           = 4'd0;
+        rs2           = 4'd0;
+        rd            = 4'd0;
+        is_load       = 1'b0;
+        is_store      = 1'b0;
+        is_branch     = 1'b0;
+        is_jal        = 1'b0;
+        is_jalr       = 1'b0;
+        is_lui        = 1'b0;
+        is_auipc      = 1'b0;
+        is_alu_reg    = 1'b0;
+        is_alu_imm    = 1'b0;
+        is_system     = 1'b0;
+        is_compressed = 1'b0;
 
-        // ================================================================
-        // 32-bit Base Instructions (8 cycles @ 4-bit/cycle)
-        // ================================================================
         if (instr[1:0] == 2'b11) begin
-            is_load    =  (instr[6:2] == 5'b00000); // rd <- mem[rs1+i_imm]
-            is_alu_imm =  (instr[6:2] == 5'b00100); // rd <- rs1 OP i_imm
-            is_auipc   =  (instr[6:2] == 5'b00101); // rd <- PC + u_imm
-            is_store   =  (instr[6:2] == 5'b01000); // mem[rs1+s_imm] <- rs2
-            is_alu_reg =  (instr[6:2] == 5'b01100); // rd <- rs1 OP rs2
-            is_lui     =  (instr[6:2] == 5'b01101); // rd <- u_imm
-            is_branch  =  (instr[6:2] == 5'b11000); // if(rs1 OP rs2) PC<-PC+b_imm
-            is_jalr    =  (instr[6:2] == 5'b11001); // rd <- PC+4; PC<-rs1+i_imm
-            is_jal     =  (instr[6:2] == 5'b11011); // rd <- PC+4; PC<-PC+j_imm
-            is_system  =  (instr[6:2] == 5'b11100); // rd <- csr - NYI
-
-            // Determine immediate. Hopefully muxing here is reasonable.
-            if (is_auipc || is_lui) imm = u_imm;
-            else if (is_store) imm = s_imm;
-            else if (is_branch) imm = b_imm;
-            else if (is_jal) imm = j_imm;
-            else imm = i_imm;
-
-            // Determine alu op
-            if (is_load || is_auipc || is_store || is_jalr || is_jal) alu_opcode = 4'b0000;  // ADD
-            else if (is_branch) alu_opcode = {1'b0, !instr[14], instr[14:13]};
-            else if (instr[26] && is_alu_reg) alu_opcode = {1'b1, instr[27:26], instr[13]};  // MUL or CZERO
-            else alu_opcode = {instr[30] && (instr[5] || instr[13:12] == 2'b01),instr[14:12]};
-
-            mem_opcode = instr[14:12];
-            if ((is_load || is_store) && instr[13:12] == 2'b11) begin
-                // TinyQV custom: 2 or 4 loads/stores to consecutive registers
-                mem_opcode = 3'b010;
-                additional_mem_opcode = {1'b0, instr[14], 1'b1};
-            end
-            if (is_store && instr[14:12] == 3'b110) begin
-                // TinyQV custom: 4 stores from the same reg (fast memset)
-                mem_opcode = 3'b010;
-                additional_mem_opcode = {1'b0, instr[14], 1'b1};
-                mem_op_increment_reg = 0;
-            end
-
-            read_addr_a = instr[15+:REG_ADDR_WIDTH];
-            read_addr_b = instr[20+:REG_ADDR_WIDTH];
-            write_dest  = instr[ 7+:REG_ADDR_WIDTH];
-        
-        // ================================================================
-        // 16-bit Compressed Instructions (4 cycles @ 4-bit/cycle)
-        // ================================================================
+            rs1 = rs1_32;
+            rs2 = rs2_32;
+            rd  = rd_32;
+            case (opcode5)
+                5'b00000: begin // LOAD
+                    is_load    = 1'b1;
+                    alu_opcode = 4'b0000; // ADD for EA
+                    mem_opcode = funct3;
+                    imm        = {{20{instr[31]}}, instr[31:20]};
+                end
+                5'b00100: begin // OP-IMM
+                    is_alu_imm = 1'b1;
+                    imm        = {{20{instr[31]}}, instr[31:20]};
+                    case (funct3)
+                        3'b000: alu_opcode = 4'b0000; // ADDI
+                        3'b001: alu_opcode = 4'b0001; // SLLI
+                        3'b010: alu_opcode = 4'b0010; // SLTI
+                        3'b011: alu_opcode = 4'b0011; // SLTIU
+                        3'b100: alu_opcode = 4'b0100; // XORI
+                        3'b101: alu_opcode = instr[30] ? 4'b1101 : 4'b0101; // SRAI:SRLI
+                        3'b110: alu_opcode = 4'b0110; // ORI
+                        3'b111: alu_opcode = 4'b0111; // ANDI
+                    endcase
+                end
+                5'b00101: begin // AUIPC
+                    is_auipc   = 1'b1;
+                    alu_opcode = 4'b0000;
+                    imm        = {instr[31:12], 12'd0};
+                end
+                5'b01000: begin // STORE
+                    is_store   = 1'b1;
+                    alu_opcode = 4'b0000;
+                    mem_opcode = funct3;
+                    imm        = {{20{instr[31]}}, instr[31:25], instr[11:7]};
+                end
+                5'b01100: begin // OP (reg-reg, includes Zicond)
+                    is_alu_reg = 1'b1;
+                    if (funct7 == 7'h07) begin // Zicond
+                        alu_opcode = {3'b111, funct3[1]}; // EQZ=1110, NEZ=1111
+                    end else begin
+                        case (funct3)
+                            3'b000: alu_opcode = funct7[5] ? 4'b1000 : 4'b0000; // SUB:ADD
+                            3'b001: alu_opcode = 4'b0001; // SLL
+                            3'b010: alu_opcode = 4'b0010; // SLT
+                            3'b011: alu_opcode = 4'b0011; // SLTU
+                            3'b100: alu_opcode = 4'b0100; // XOR
+                            3'b101: alu_opcode = funct7[5] ? 4'b1101 : 4'b0101; // SRA:SRL
+                            3'b110: alu_opcode = 4'b0110; // OR
+                            3'b111: alu_opcode = 4'b0111; // AND
+                        endcase
+                    end
+                end
+                5'b01101: begin // LUI
+                    is_lui = 1'b1;
+                    imm    = {instr[31:12], 12'd0};
+                end
+                5'b11000: begin // BRANCH
+                    is_branch  = 1'b1;
+                    imm        = {{19{instr[31]}}, instr[31], instr[7], instr[30:25], instr[11:8], 1'b0};
+                    case (funct3[2:1])
+                        2'b00: alu_opcode = 4'b0100; // BEQ/BNE -> XOR
+                        2'b10: alu_opcode = 4'b0010; // BLT/BGE  -> SLT
+                        2'b11: alu_opcode = 4'b0011; // BLTU/BGEU -> SLTU
+                        default: alu_opcode = 4'b0100;
+                    endcase
+                end
+                5'b11001: begin // JALR
+                    is_jalr    = 1'b1;
+                    alu_opcode = 4'b0000;
+                    imm        = {{20{instr[31]}}, instr[31:20]};
+                end
+                5'b11011: begin // JAL
+                    is_jal = 1'b1;
+                    imm    = {{11{instr[31]}}, instr[31], instr[19:12], instr[20], instr[30:21], 1'b0};
+                end
+                5'b11100: begin // SYSTEM (Zicsr stub: reads return 0, writes ignored)
+                    is_system = 1'b1;
+                end
+                5'b00011: begin // FENCE/NOP in this implementation
+                end
+                default: begin end
+            endcase
         end else begin
-            is_compressed = 1;
-            is_load         = 0;
-            is_alu_imm      = 0;
-            is_auipc        = 0;
-            is_store        = 0;
-            is_alu_reg      = 0;
-            is_lui          = 0;
-            is_branch       = 0;
-            is_jalr         = 0;
-            is_jal          = 0;
-            is_system       = 0;
-            imm = {32{1'bx}};
-            alu_opcode = 4'b0000;
-            mem_opcode = 3'bxxx;
-            read_addr_a = {REG_ADDR_WIDTH{1'bx}};
-            read_addr_b = {REG_ADDR_WIDTH{1'bx}};
-            write_dest = {REG_ADDR_WIDTH{1'bx}};
-
-            case ({c_quadrant, c_funct3})
-                // ============================================================
-                // Quadrant 00 - Loads, Stores, and Stack Operations
-                // ============================================================
-                5'b00000: begin // C.ADDI4SPN (CIW-Type) 
-                    is_alu_imm = 1;
-                    imm = c_addi4sp_imm;
-                    read_addr_a = 4'd2;
-                    write_dest  = {1'b1, instr[4:2]};
-                end
-                5'b00010: begin // LW
-                    is_load = 1;
-                    mem_opcode = 3'b010;
-                    imm = c_lsw_imm;
-                    read_addr_a = {1'b1, instr[9:7]};
-                    write_dest  = {1'b1, instr[4:2]};
-                end 
-                5'b00100: begin // Load/store byte or halfword
-                    imm = instr[10] ? c_lsh_imm : c_lsb_imm;
-                    read_addr_a = {1'b1, instr[9:7]};
-                    if (instr[11]) begin
-                        is_store = 1;
-                        mem_opcode = {2'b00, instr[10]};
-                        read_addr_b = {1'b1, instr[4:2]};
-                    end else begin
-                        is_load = 1;
-                        mem_opcode = {~(instr[10] & instr[6]), 1'b0, instr[10]};
-                        write_dest = {1'b1, instr[4:2]};
-                    end
-                end
-                5'b00110: begin // SW
-                    is_store = 1;
-                    mem_opcode = 3'b010;
-                    imm = c_lsw_imm;
-                    read_addr_a = {1'b1, instr[9:7]};
-                    read_addr_b = {1'b1, instr[4:2]};
-                end
-                5'b00111: begin // SCXT: Store rs2[2:0]+1 contiguous registers starting at {rs2[4:3], 3'b001}
-                    is_store = 1;    //  from address imm(gp) (imm is a sign-extended 6-bit immediate multiplied by 16)
-                    mem_opcode = 3'b010;
-                    imm = c_scxt_imm;
-                    read_addr_a = 4'd3;
-                    read_addr_b = {instr[5], 3'b001};
-                    additional_mem_opcode = instr[4:2];
-                end
-                
-                // ============================================================
-                // Quadrant 01 - ALU, Control Flow, and Immediates
-                // ============================================================
-                5'b01000: begin // C.ADDI (CI-Type)
-                    is_alu_imm = 1;
-                    imm = c_alu_imm;
-                    read_addr_a = instr[10:7];
-                    write_dest  = instr[10:7];
-                end
-                5'b01001: begin // JAL
-                    is_jal = 1;
-                    imm = c_j_imm;
-                    write_dest  = 4'd1;
-                end
-                5'b01010: begin // LI
-                    is_alu_imm = 1;
-                    imm = c_alu_imm;
-                    read_addr_a = 4'd0;
-                    write_dest  = instr[10:7];
-                end
-                5'b01011: begin // ADDI16SP/LUI
-                    write_dest  = instr[10:7];
-                    if (instr[10:7] == 4'd2) begin
-                        is_alu_imm = 1;
-                        imm = c_addi16sp_imm;
-                        read_addr_a = 4'd2;
-                    end else begin
-                        is_lui = 1;
-                        imm = c_lui_imm;
-                    end
-                end
-                5'b01100: begin // ALU
-                    read_addr_a = {1'b1, instr[9:7]};
-                    read_addr_b = {1'b1, instr[4:2]};
-                    write_dest  = {1'b1, instr[9:7]};
-                    imm = c_alu_imm;
-                    if (instr[11:10] != 2'b11) begin
-                        is_alu_imm = 1;
-                        if (instr[11] == 1'b0) begin // SRx
-                            alu_opcode = {instr[10], 3'b101};
-                        end else begin
-                            alu_opcode = 4'b0111;
+            is_compressed = 1'b1;
+            case (c_quad)
+                2'b00: begin
+                    case (c_f3)
+                        3'b000: begin // C.ADDI4SPN: rd' = sp + nzuimm*4
+                            rd  = c_rd_p;
+                            rs1 = 4'd2; // sp
                         end
-                    end else if (instr[12]) begin
-                        is_alu_imm = 1;
-                        case (instr[4:2])
-                            3'b101: begin  // NOT
-                                    alu_opcode = 4'b0100; // XOR
-                                    imm = 32'hffffffff;
+                        3'b010: begin // C.LW
+                            is_load    = 1'b1;
+                            rd         = c_rd_p;
+                            rs1        = c_rs1_p;
+                            mem_opcode = 3'b010;
+                            alu_opcode = 4'b0000;
+                        end
+                        3'b100: begin // Zcb: C.LBU/C.LHU/C.LH/C.SB/C.SH
+                            rd  = c_rd_p;
+                            rs1 = c_rs1_p;
+                            rs2 = c_rs2_p;
+                            alu_opcode = 4'b0000;
+                            if (!instr[11]) begin // loads
+                                is_load = 1'b1;
+                                if (!instr[10])       mem_opcode = 3'b100; // C.LBU byte unsigned
+                                else if (!instr[6])   mem_opcode = 3'b101; // C.LHU halfword unsigned
+                                else                  mem_opcode = 3'b001; // C.LH halfword signed
+                            end else begin // stores
+                                is_store = 1'b1;
+                                mem_opcode = instr[10] ? 3'b001 : 3'b000; // C.SH : C.SB
                             end
-                            default: begin // ZEXT
+                        end
+                        3'b110: begin // C.SW
+                            is_store   = 1'b1;
+                            rs1        = c_rs1_p;
+                            rs2        = c_rs2_p;
+                            mem_opcode = 3'b010;
+                            alu_opcode = 4'b0000;
+                        end
+                        default: begin end
+                    endcase
+                end
+                2'b01: begin
+                    case (c_f3)
+                        3'b000: begin // C.ADDI / C.NOP
+                            is_alu_imm = 1'b1;
+                            rd         = c_rd_f;
+                            rs1        = c_rd_f;
+                            alu_opcode = 4'b0000;
+                            imm        = {{26{instr[12]}}, instr[12], instr[6:2]};
+                        end
+                        3'b001: begin // C.JAL (RV32 only)
+                            is_jal = 1'b1;
+                            rd     = 4'd1; // ra
+                        end
+                        3'b010: begin // C.LI
+                            is_alu_imm = 1'b1;
+                            rd         = c_rd_f;
+                            rs1        = 4'd0;
+                            alu_opcode = 4'b0000;
+                            imm        = {{26{instr[12]}}, instr[12], instr[6:2]};
+                        end
+                        3'b011: begin // C.ADDI16SP or C.LUI
+                            if (c_rd_f == 4'd2) begin // C.ADDI16SP
+                                is_alu_imm = 1'b1;
+                                rd         = 4'd2;
+                                rs1        = 4'd2;
+                                alu_opcode = 4'b0000;
+                                imm        = {{23{instr[12]}}, instr[4:3], instr[5], instr[2], instr[6], 4'b0};
+                            end else begin // C.LUI
+                                is_lui = 1'b1;
+                                rd     = c_rd_f;
+                                imm    = {{14{instr[12]}}, instr[12], instr[6:2], 12'd0};
+                            end
+                        end
+                        3'b100: begin // C.SRLI/C.SRAI/C.ANDI/C.SUB/C.XOR/C.OR/C.AND
+                            rd  = c_rs1_p;
+                            rs1 = c_rs1_p;
+                            rs2 = c_rs2_p;
+                            case (instr[11:10])
+                                2'b00: begin // C.SRLI
+                                    is_alu_imm = 1'b1;
+                                    alu_opcode = 4'b0101; // SRL
+                                end
+                                2'b01: begin // C.SRAI
+                                    is_alu_imm = 1'b1;
+                                    alu_opcode = 4'b1101; // SRA
+                                end
+                                2'b10: begin // C.ANDI
+                                    is_alu_imm = 1'b1;
                                     alu_opcode = 4'b0111; // AND
-                                    imm = {16'h0000, {8{instr[3]}}, 8'hff};
+                                end
+                                2'b11: begin // C.SUB/XOR/OR/AND (CA) or C.MUL (Zcb, instr[12]=1, funct2=10)
+                                    is_alu_reg = 1'b1;
+                                    if (instr[12] && instr[6:5] == 2'b10) begin
+                                        alu_opcode = 4'b1010; // C.MUL
+                                    end else begin
+                                        case (instr[6:5])
+                                            2'b00: alu_opcode = 4'b1000; // SUB
+                                            2'b01: alu_opcode = 4'b0100; // XOR
+                                            2'b10: alu_opcode = 4'b0110; // OR
+                                            2'b11: alu_opcode = 4'b0111; // AND
+                                        endcase
+                                    end
+                                end
+                            endcase
+                        end
+                        3'b101: begin // C.J
+                            is_jal = 1'b1;
+                            rd     = 4'd0; // discard
+                        end
+                        3'b110: begin // C.BEQZ
+                            is_branch  = 1'b1;
+                            rs1        = c_rs1_p;
+                            alu_opcode = 4'b0100; // XOR for eq test
+                        end
+                        3'b111: begin // C.BNEZ
+                            is_branch  = 1'b1;
+                            rs1        = c_rs1_p;
+                            alu_opcode = 4'b0100;
+                        end
+                    endcase
+                end
+                2'b10: begin
+                    case (c_f3)
+                        3'b000: begin // C.SLLI
+                            is_alu_imm = 1'b1;
+                            rd         = c_rd_f;
+                            rs1        = c_rd_f;
+                            alu_opcode = 4'b0001;
+                        end
+                        3'b010: begin // C.LWSP
+                            is_load    = 1'b1;
+                            rd         = c_rd_f;
+                            rs1        = 4'd2; // sp
+                            mem_opcode = 3'b010;
+                            alu_opcode = 4'b0000;
+                        end
+                        3'b100: begin // C.JR / C.MV / C.ADD / C.JALR / C.EBREAK
+                            rd  = c_rd_f;
+                            rs1 = c_rd_f;
+                            rs2 = c_rs2_f;
+                            if (!instr[12]) begin
+                                if (c_rs2_f == 4'd0) begin // C.JR
+                                    is_jalr    = 1'b1;
+                                    rd         = 4'd0;
+                                    alu_opcode = 4'b0000;
+                                end else begin // C.MV
+                                    is_alu_reg = 1'b1;
+                                    rs1        = 4'd0;
+                                    alu_opcode = 4'b0000;
+                                end
+                            end else begin
+                                if (c_rs2_f == 4'd0) begin
+                                    if (c_rd_f == 4'd0) begin // C.EBREAK
+                                        is_system = 1'b1;
+                                    end else begin // C.JALR
+                                        is_jalr    = 1'b1;
+                                        rd         = 4'd1; // ra
+                                        alu_opcode = 4'b0000;
+                                    end
+                                end else begin // C.ADD
+                                    is_alu_reg = 1'b1;
+                                    alu_opcode = 4'b0000;
+                                end
                             end
-                        endcase
+                        end
                         
-                    end else begin
-                        is_alu_reg = 1;
-                        case (instr[6:5])
-                            2'b00: alu_opcode = 4'b1000;  // SUB
-                            2'b01: alu_opcode = 4'b0100;  // XOR
-                            2'b10: alu_opcode = 4'b0110;  // OR
-                            2'b11: alu_opcode = 4'b0111;  // AND
-                        endcase
-                    end
-                end
-                5'b01101: begin // J
-                    is_jal = 1;
-                    imm = c_j_imm;
-                    write_dest  = 4'd0;
-                end                
-                5'b01110: begin // BEQZ
-                    is_branch = 1;
-                    imm = c_b_imm;
-                    read_addr_a = {1'b1, instr[9:7]};
-                    read_addr_b = 4'd0;
-                    alu_opcode = 4'b0100;
-                    mem_opcode = 3'b000;
-                end    
-                5'b01111: begin // BNEZ
-                    is_branch = 1;
-                    imm = c_b_imm;
-                    read_addr_a = {1'b1, instr[9:7]};
-                    read_addr_b = 4'd0;
-                    alu_opcode = 4'b0100;
-                    mem_opcode = 3'b001;
-                end
-                
-                // ============================================================
-                // Quadrant 10 - Stack-relative, Register Ops, and Jumps  
-                // ============================================================
-                5'b10000: begin // C.SLLI (CI-Type)
-                    is_alu_imm = 1;
-                    imm = c_alu_imm;
-                    read_addr_a = instr[10:7];
-                    write_dest  = instr[10:7];
-                    alu_opcode = 4'b0001;
-                end
-                5'b10001: begin // LCXT: Load rd[2:0]+1 contiguous registers starting at {rd[4:3], 3'b001}
-                    is_load = 1;     //  from address imm(gp) (imm is a sign-extended 6-bit immediate multiplied by 16)
-                    mem_opcode = 3'b010;
-                    imm = c_addi16sp_imm;
-                    read_addr_a = 4'd3;
-                    write_dest  = {instr[10], 3'b001};
-                    additional_mem_opcode = instr[9:7];
-                end
-                5'b10010: begin // LWSP
-                    is_load = 1;
-                    mem_opcode = 3'b010;
-                    imm = c_lwsp_imm;
-                    read_addr_a = 4'd2;
-                    write_dest  = instr[10:7];
-                end
-                5'b10011: begin // LWTP
-                    is_load = 1;
-                    mem_opcode = 3'b010;
-                    imm = c_lwsp_imm;
-                    read_addr_a = 4'd4;
-                    write_dest  = instr[10:7];
-                end
-                5'b10100: begin 
-                    if (instr[12]) begin  // funct4[12] = 1
-                        if (instr[6:2] != 5'd0) begin  // C.ADD: bit 12 = 1, rs2 != 0
-                            is_alu_reg = 1;
-                            read_addr_a = instr[10:7];
-                            read_addr_b = instr[5:2];
-                            write_dest  = instr[10:7];
-                        end else if (instr[11:7] != 5'd0) begin  // C.JALR: bit 12 = 1, rs1 != 0, rs2 = 0
-                            if (instr[11:7] == 5'd1) is_ret = 1;
-                            is_jalr = 1;
-                            imm = 0;
-                            read_addr_a = instr[10:7];
-                            write_dest = 4'd1;  // x1 = ra
-                        end else begin  // C.EBREAK: bit 12 = 1, rs1 = 0, rs2 = 0
-                            is_system = 1;
-                            imm = 32'd1;
+                        // 3'b101: begin end // reserved
+                        3'b110: begin // C.SWSP
+                            is_store   = 1'b1;
+                            rs1        = 4'd2; // sp
+                            rs2        = c_rs2_f;
+                            mem_opcode = 3'b010;
+                            alu_opcode = 4'b0000;
                         end
-                    end else begin  // funct4[12] = 0
-                        if (instr[6:2] == 5'd0) begin  // C.JR: bit 12 = 0, rs2 = 0 (C.EBREAK is at bit 12=1)
-                            if (instr[11:7] == 5'd1) is_ret = 1;
-                            is_jalr = 1;
-                            imm = 0;
-                            read_addr_a = instr[10:7];
-                            write_dest = 4'd1;  // TinyMOA: C.JR also writes to x1
-                        end else begin  // C.MV: bit 12 = 0, rs2 != 0
-                            is_alu_reg = 1;
-                            read_addr_a = 4'd0;
-                            read_addr_b = instr[5:2];
-                            write_dest  = instr[10:7];
-                        end
-                    end
+                        default: begin end
+                    endcase
                 end
-                5'b10101: begin // C.MUL16
-                    is_alu_reg = 1;
-                    alu_opcode = 4'b1010;
-                    read_addr_a = instr[10:7];
-                    read_addr_b = instr[5:2];
-                    write_dest  = instr[10:7];
-                end
-                5'b10110: begin // SWSP
-                    is_store = 1;
-                    mem_opcode = 3'b010;
-                    imm = c_swsp_imm;
-                    read_addr_a = 4'd2;
-                    read_addr_b = instr[5:2];
-                end
-                5'b10111: begin // SWTP
-                    is_store = 1;
-                    mem_opcode = 3'b010;
-                    imm = c_swsp_imm;
-                    read_addr_a = 4'd4;
-                    read_addr_b = instr[5:2];
-                end
-                default: begin
-                    is_system = 1;
-                    imm = 32'd2;
-                end
+                default: begin end
             endcase
         end
     end
