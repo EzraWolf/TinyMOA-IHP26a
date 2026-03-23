@@ -91,3 +91,49 @@ module tinymoa_tcm (
 `endif
 
 endmodule
+
+
+module RM_IHPSG13_2P_512x32_c2_bm_bist (
+
+    // Port A
+    input         A_CLK,
+    input         A_MEN,
+    input         A_WEN,
+    input         A_REN,
+    input  [8:0]  A_ADDR,
+    input  [31:0] A_DIN,
+    input         A_DLY,
+    output [31:0] A_DOUT,
+    input  [31:0] A_BM,
+
+    input A_BIST_CLK,
+    input A_BIST_EN,
+    input A_BIST_MEN,
+    input A_BIST_WEN,
+    input A_BIST_REN,
+    input [8:0] A_BIST_ADDR,
+    input [31:0] A_BIST_DIN,
+    input [31:0] A_BIST_BM,
+
+    // Port B
+    input         B_CLK,
+    input         B_MEN,
+    input         B_WEN,
+    input         B_REN,
+    input  [8:0]  B_ADDR,
+    input  [31:0] B_DIN,
+    input         B_DLY,
+    output [31:0] B_DOUT,
+    input  [31:0] B_BM,
+
+    input         B_BIST_CLK,
+    input         B_BIST_EN,
+    input         B_BIST_MEN,
+    input         B_BIST_WEN,
+    input         B_BIST_REN,
+    input  [8:0]  B_BIST_ADDR,
+    input  [31:0] B_BIST_DIN,
+    input  [31:0] B_BIST_BM
+)
+    // Empty for LEF.
+endmodule
