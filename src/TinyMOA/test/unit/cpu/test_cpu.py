@@ -153,8 +153,8 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
 
 
-async def setup_tb_cpu(dut):
-    """Initialize the CPU"""
+async def setup(dut):
+    """Initialize the CPU core"""
     clock = Clock(dut.clk, 10, unit="ns")
     cocotb.start_soon(clock.start())
 
@@ -166,7 +166,7 @@ async def setup_tb_cpu(dut):
 @cocotb.test()
 async def test_foo(dut):
     """Test template"""
-    await setup_tb_cpu(dut)
+    await setup(dut)
     await ClockCycles(dut.clk, 1)
 
     raise NotImplementedError("Test not implemented yet")

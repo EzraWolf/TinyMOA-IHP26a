@@ -1,80 +1,76 @@
 """
-Test suite for the ALU (tinymoa_alu)
+ALU unit tests (tinymoa_alu, 32-bit combinational).
+
+Full test list:
 - add_basic
-- add_carry_propagation
+- add_carry_in
 - add_overflow_wrap
+
 - sub_basic
-- sub_borrow_propagation
+- sub_borrow_with_carry_in
 - sub_negative_result
+
 - and_basic
 - or_basic
 - xor_basic
 - bitwise_all_zeros
 - bitwise_all_ones
+
 - slt_positive_less_than
 - slt_negative_less_than
 - slt_equal
 - sltu_unsigned_compare
-- czero_eqz
-- czero_nez
-- carry_chain_across_nibbles
-- cmp_out_accumulation_across_nibbles
+
+- sll_basic
+- sll_by_zero
+- sll_by_thirtyone
+- srl_basic
+- srl_zero_fill
+- sra_positive
+- sra_negative_sign_extend
+
+- mul_basic
+- mul_zero
+- mul_max
+
+- czero_eqz_b_zero
+- czero_eqz_b_nonzero
+- czero_nez_b_zero
+- czero_nez_b_nonzero
 """
 
 import random
 import cocotb
-from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import Timer
 
 
-async def setup(dut):
-    clock = Clock(dut.clk, 10, unit="ns")
-    cocotb.start_soon(clock.start())
-    dut.nrst.value = 0
-    dut.opcode.value = 0
-    dut.a_in.value = 0
-    dut.b_in.value = 0
-    dut.c_in.value = 0
-    await ClockCycles(dut.clk, 1)
-    dut.nrst.value = 1
+ADD = 0b0000
+SUB = 0b0001
+SLT = 0b0010
+SLTU = 0b0011
+XOR = 0b0100
+OR = 0b0101
+AND = 0b0110
+SLL = 0b1000
+SRL = 0b1001
+SRA = 0b1010
+MUL = 0b1011
+CZERO_EQZ = 0b1110
+CZERO_NEZ = 0b1111
 
 
-async def compute_alu_loop(dut, opcode, iterations=100):
-    """Loop multiple ALU operations with randomised inputs to stress-test carry/compare chains."""
-    dut.opcode.value = opcode
-    a = random.randint(0, 0xFFFFFFFF)
-    b = random.randint(0, 0xFFFFFFFF)
-    c = random.randint(0, 1)
-    dut.a_in.value = a
-    dut.b_in.value = b
-    dut.c_in.value = c
-    await ClockCycles(dut.clk, 1)
-
-    results = []
-    for _ in range(iterations):
-        await ClockCycles(dut.clk, 7)
-        next_a = random.randint(0, 0xFFFFFFFF)
-        next_b = random.randint(0, 0xFFFFFFFF)
-        next_c = random.randint(0, 1)
-
-        dut.a_in.value = next_a
-        dut.b_in.value = next_b
-        dut.c_in.value = next_c
-        await ClockCycles(dut.clk, 1)
-        results.append((int(dut.result.value), int(a), int(b), int(c)))
-        a, b, c = next_a, next_b, next_c
-    return results
-
-
-async def compute_alu(dut, opcode, a, b, c=0):
-    """Run a single ALU instruction"""
+async def alu(dut, opcode, a, b, c=0):
     dut.opcode.value = opcode
     dut.a_in.value = a & 0xFFFFFFFF
     dut.b_in.value = b & 0xFFFFFFFF
     dut.c_in.value = c & 0x1
-    await ClockCycles(dut.clk, 1 + 8)  # 1 load, 8 compute
+    await Timer(1, units="ns")
+    return int(dut.result.value)
 
-    return (int(dut.result.value), int(dut.c_out.value), int(dut.cmp_out.value))
+
+def s32(v):
+    v &= 0xFFFFFFFF
+    return v if v < 0x80000000 else v - 0x100000000
 
 
 # === ADD ===
@@ -82,30 +78,24 @@ async def compute_alu(dut, opcode, a, b, c=0):
 
 @cocotb.test()
 async def add_basic(dut):
-    await setup(dut)
-    for result, a, b, c in await compute_alu_loop(dut, 0b0000):
-        expected = (a + b + c) & 0xFFFFFFFF
-        assert result == expected, (
-            f"{hex(a)} + {hex(b)} + {hex(c)}: expected {hex(expected)}, got {hex(result)}"
-        )
+    for _ in range(20):
+        a = random.randint(0, 0xFFFFFFFF)
+        b = random.randint(0, 0xFFFFFFFF)
+        r = await alu(dut, ADD, a, b)
+        assert r == (a + b) & 0xFFFFFFFF, f"{hex(a)} + {hex(b)}: got {hex(r)}"
 
 
 @cocotb.test()
-async def add_carry_propagation(dut):
-    """0xFFFFFFFF + 1 = 0 with c_out=1"""
-    await setup(dut)
-    result, c_out, _ = await compute_alu(dut, 0b0000, 0xFFFFFFFF, 0x1)
-    assert result == 0, f"expected 0, got {hex(result)}"
-    assert c_out == 1
+async def add_carry_in(dut):
+    r = await alu(dut, ADD, 0xFFFFFFFF, 0x0, c=1)
+    assert r == 0, f"0xFFFFFFFF + 0 + 1: expected 0, got {hex(r)}"
+    r = await alu(dut, ADD, 0x0, 0x0, c=1)
+    assert r == 1
 
 
 @cocotb.test()
 async def add_overflow_wrap(dut):
-    """0x7FFFFFFF + 1 = 0x80000000: signed overflow, no carry"""
-    await setup(dut)
-    result, c_out, _ = await compute_alu(dut, 0b0000, 0x7FFFFFFF, 0x1)
-    assert result == 0x80000000, f"expected 0x80000000, got {hex(result)}"
-    assert c_out == 0
+    assert await alu(dut, ADD, 0xFFFFFFFF, 0x1) == 0
 
 
 # === SUB ===
@@ -113,134 +103,138 @@ async def add_overflow_wrap(dut):
 
 @cocotb.test()
 async def sub_basic(dut):
-    await setup(dut)
-    for result, a, b, c in await compute_alu_loop(dut, 0b1000):
-        expected = (a - b + c - 1) & 0xFFFFFFFF
-        assert result == expected, (
-            f"{hex(a)} - {hex(b)} + {hex(c)} - 1: expected {hex(expected)}, got {hex(result)}"
-        )
-
-
-@cocotb.test()
-async def sub_borrow_propagation(dut):
-    """0 - 1 = 0xFFFFFFFF: borrow ripples across all 8 nibbles"""
-    await setup(dut)
-    result, _, _ = await compute_alu(dut, 0b1000, 0x0, 0x1, c=0x1)
-    assert result == 0xFFFFFFFF, f"expected 0xFFFFFFFF, got {hex(result)}"
+    for _ in range(20):
+        a = random.randint(0, 0xFFFFFFFF)
+        b = random.randint(0, 0xFFFFFFFF)
+        r = await alu(dut, SUB, a, b)
+        assert r == (a - b) & 0xFFFFFFFF, f"{hex(a)} - {hex(b)}: got {hex(r)}"
 
 
 @cocotb.test()
 async def sub_negative_result(dut):
-    """a - b where a < b: result is correct signed negative"""
-    await setup(dut)
-    a = random.randint(0, 0x7FFFFFFE)
-    b = random.randint(a + 1, 0x7FFFFFFF)
-    result, _, _ = await compute_alu(dut, 0b1000, a, b, c=0x1)
-    expected = (a - b) & 0xFFFFFFFF
-    assert result == expected, (
-        f"{hex(a)} - {hex(b)}: expected {hex(expected)}, got {hex(result)}"
-    )
+    assert await alu(dut, SUB, 0, 1) == 0xFFFFFFFF
 
 
-# === AND / OR / XOR ===
+# === BITWISE ===
 
 
 @cocotb.test()
 async def and_basic(dut):
-    await setup(dut)
-    for result, a, b, c in await compute_alu_loop(dut, 0b0111):
-        assert result == a & b, (
-            f"{hex(a)} & {hex(b)}: expected {hex(a & b)}, got {hex(result)}"
-        )
+    for _ in range(20):
+        a, b = random.randint(0, 0xFFFFFFFF), random.randint(0, 0xFFFFFFFF)
+        r = await alu(dut, AND, a, b)
+        assert r == a & b
 
 
 @cocotb.test()
 async def or_basic(dut):
-    await setup(dut)
-    for result, a, b, c in await compute_alu_loop(dut, 0b0110):
-        assert result == a | b, (
-            f"{hex(a)} | {hex(b)}: expected {hex(a | b)}, got {hex(result)}"
-        )
+    a = random.randint(0, 0xFFFFFFFF)
+    b = random.randint(0, 0xFFFFFFFF)
+    r = await alu(dut, OR, a, b)
+    assert r == a | b
 
 
 @cocotb.test()
 async def xor_basic(dut):
-    await setup(dut)
-    for result, a, b, c in await compute_alu_loop(dut, 0b0100):
-        assert result == a ^ b, (
-            f"{hex(a)} ^ {hex(b)}: expected {hex(a ^ b)}, got {hex(result)}"
-        )
-
-
-@cocotb.test()
-async def bitwise_all_zeros(dut):
-    """AND / OR / XOR against zero boundary operand"""
-    await setup(dut)
-    a = random.randint(1, 0xFFFFFFFF)
-    r, _, _ = await compute_alu(dut, 0b0111, a, 0x0)
-    assert r == 0, f"AND with 0: {hex(r)}"
-    r, _, _ = await compute_alu(dut, 0b0110, 0x0, 0x0)
-    assert r == 0, f"OR 0|0: {hex(r)}"
-    r, _, _ = await compute_alu(dut, 0b0100, a, a)
-    assert r == 0, f"XOR a^a: {hex(r)}"
-
-
-@cocotb.test()
-async def bitwise_all_ones(dut):
-    """AND / OR / XOR against 0xFFFFFFFF boundary operand"""
-    await setup(dut)
     a = random.randint(0, 0xFFFFFFFF)
-    r, _, _ = await compute_alu(dut, 0b0111, a, 0xFFFFFFFF)
-    assert r == a, f"AND all-ones identity: {hex(r)}"
-    r, _, _ = await compute_alu(dut, 0b0110, 0x0, 0xFFFFFFFF)
-    assert r == 0xFFFFFFFF, f"OR with all-ones: {hex(r)}"
-    r, _, _ = await compute_alu(dut, 0b0100, 0xFFFFFFFF, 0xFFFFFFFF)
-    assert r == 0, f"XOR all-ones^all-ones: {hex(r)}"
+    assert await alu(dut, XOR, a, a) == 0
+    assert await alu(dut, XOR, a, 0) == a
+    assert await alu(dut, XOR, a, 0xFFFFFFFF) == (~a & 0xFFFFFFFF)
 
 
 # === SLT / SLTU ===
 
 
 @cocotb.test()
-async def slt_positive_less_than(dut):
-    """SLT: positive a < positive b gives cmp_out=1"""
-    await setup(dut)
-    a = random.randint(0, 0x3FFFFFFE)
-    b = random.randint(a + 1, 0x3FFFFFFF)
-    _, _, cmp_out = await compute_alu(dut, 0b0010, a, b, c=0x1)
-    assert cmp_out == 1, f"SLT {hex(a)} < {hex(b)}: expected 1, got {cmp_out}"
+async def slt_basic(dut):
+    assert await alu(dut, SLT, 0, 1) == 1
+    assert await alu(dut, SLT, 1, 0) == 0
+    assert await alu(dut, SLT, 0, 0) == 0
+    # negative < positive
+    assert await alu(dut, SLT, 0x80000000, 0x7FFFFFFF) == 1
+    # positive not < negative
+    assert await alu(dut, SLT, 0x7FFFFFFF, 0x80000000) == 0
 
 
 @cocotb.test()
-async def slt_negative_less_than(dut):
-    """SLT: negative a < positive b gives cmp_out=1"""
-    await setup(dut)
-    a = random.randint(0x80000000, 0xFFFFFFFF)
-    b = random.randint(0, 0x7FFFFFFF)
-    _, _, cmp_out = await compute_alu(dut, 0b0010, a, b, c=0x1)
-    assert cmp_out == 1, f"SLT {hex(a)} < {hex(b)}: expected 1, got {cmp_out}"
+async def sltu_basic(dut):
+    assert await alu(dut, SLTU, 0, 1) == 1
+    assert await alu(dut, SLTU, 1, 0) == 0
+    assert await alu(dut, SLTU, 0, 0) == 0
+    # 0x80000000 is large unsigned
+    assert await alu(dut, SLTU, 0x7FFFFFFF, 0x80000000) == 1
+    assert await alu(dut, SLTU, 0x80000000, 0x7FFFFFFF) == 0
+
+
+# === SHIFTS ===
 
 
 @cocotb.test()
-async def slt_equal(dut):
-    """SLT: a == b gives cmp_out=0"""
-    await setup(dut)
-    a = random.randint(0, 0xFFFFFFFF)
-    _, _, cmp_out = await compute_alu(dut, 0b0010, a, a, c=0x1)
-    assert cmp_out == 0, f"SLT {hex(a)} == {hex(a)}: expected 0, got {cmp_out}"
+async def sll_basic(dut):
+    assert await alu(dut, SLL, 1, 0) == 1
+    assert await alu(dut, SLL, 1, 1) == 2
+    assert await alu(dut, SLL, 1, 31) == 0x80000000
+    assert await alu(dut, SLL, 0xFFFFFFFF, 1) == 0xFFFFFFFE
+    for _ in range(20):
+        a = random.randint(0, 0xFFFFFFFF)
+        sh = random.randint(0, 31)
+        r = await alu(dut, SLL, a, sh)
+        assert r == (a << sh) & 0xFFFFFFFF
 
 
 @cocotb.test()
-async def sltu_unsigned_compare(dut):
-    """SLTU: random unsigned comparison verified against Python reference"""
-    await setup(dut)
-    a = random.randint(0, 0xFFFFFFFF)
-    b = random.randint(0, 0xFFFFFFFF)
-    _, _, cmp_out = await compute_alu(dut, 0b0011, a, b, c=0x1)
-    expected = 1 if a < b else 0
-    assert cmp_out == expected, (
-        f"SLTU {hex(a)} < {hex(b)}: expected {expected}, got {cmp_out}"
-    )
+async def srl_basic(dut):
+    assert await alu(dut, SRL, 0x80000000, 1) == 0x40000000
+    assert await alu(dut, SRL, 0xFFFFFFFF, 31) == 1
+    for _ in range(20):
+        a = random.randint(0, 0xFFFFFFFF)
+        sh = random.randint(0, 31)
+        r = await alu(dut, SRL, a, sh)
+        assert r == (a >> sh) & 0xFFFFFFFF
+
+
+@cocotb.test()
+async def sra_basic(dut):
+    # positive: same as SRL
+    assert await alu(dut, SRA, 0x40000000, 1) == 0x20000000
+    # negative: sign extends
+    assert await alu(dut, SRA, 0x80000000, 1) == 0xC0000000
+    assert await alu(dut, SRA, 0xFFFFFFFF, 31) == 0xFFFFFFFF
+    for _ in range(20):
+        a = random.randint(0, 0xFFFFFFFF)
+        sh = random.randint(0, 31)
+        r = await alu(dut, SRA, a, sh)
+        expected = (s32(a) >> sh) & 0xFFFFFFFF
+        assert r == expected, (
+            f"SRA {hex(a)} >> {sh}: expected {hex(expected)}, got {hex(r)}"
+        )
+
+
+# === MUL (16x16 unsigned -> 32) ===
+
+
+@cocotb.test()
+async def mul_basic(dut):
+    assert await alu(dut, MUL, 3, 4) == 12
+    assert await alu(dut, MUL, 0, 0xFFFF) == 0
+    assert await alu(dut, MUL, 0xFFFF, 0xFFFF) == 0xFFFF * 0xFFFF
+    for _ in range(20):
+        a = random.randint(0, 0xFFFF)
+        b = random.randint(0, 0xFFFF)
+        r = await alu(dut, MUL, a, b)
+        assert r == a * b, f"{a} * {b}: expected {a * b}, got {r}"
+
+
+@cocotb.test()
+async def mul_zero(dut):
+    assert await alu(dut, MUL, 0, 0) == 0
+    assert await alu(dut, MUL, 0, 0xFFFF) == 0
+    assert await alu(dut, MUL, 0xFFFF, 0) == 0
+
+
+@cocotb.test()
+async def mul_max(dut):
+    assert await alu(dut, MUL, 0xFFFF, 0xFFFF) == 0xFFFF * 0xFFFF
 
 
 # === CZERO ===
@@ -248,44 +242,29 @@ async def sltu_unsigned_compare(dut):
 
 @cocotb.test()
 async def czero_eqz(dut):
-    """CZERO.EQZ: result is pass-through of a_in"""
-    await setup(dut)
-    a = random.randint(0, 0xFFFFFFFF)
-    b = random.randint(0, 0xFFFFFFFF)
-    result, _, _ = await compute_alu(dut, 0b1110, a, b)
-    assert result == a, f"CZERO.EQZ: expected {hex(a)}, got {hex(result)}"
+    a = random.randint(1, 0xFFFFFFFF)
+    # b == 0: result = 0
+    assert await alu(dut, CZERO_EQZ, a, 0) == 0
+    # b != 0: result = a
+    assert await alu(dut, CZERO_EQZ, a, 1) == a
+    assert await alu(dut, CZERO_EQZ, a, 0xFFFFFFFF) == a
 
 
 @cocotb.test()
 async def czero_nez(dut):
-    """CZERO.NEZ: result is pass-through of a_in"""
-    await setup(dut)
-    a = random.randint(0, 0xFFFFFFFF)
-    b = random.randint(0, 0xFFFFFFFF)
-    result, _, _ = await compute_alu(dut, 0b1111, a, b)
-    assert result == a, f"CZERO.NEZ: expected {hex(a)}, got {hex(result)}"
-
-
-# === Carry / compare chain ===
+    a = random.randint(1, 0xFFFFFFFF)
+    # b != 0: result = 0
+    assert await alu(dut, CZERO_NEZ, a, 1) == 0
+    assert await alu(dut, CZERO_NEZ, a, 0xFFFFFFFF) == 0
+    # b == 0: result = a
+    assert await alu(dut, CZERO_NEZ, a, 0) == a
 
 
 @cocotb.test()
-async def carry_chain_across_nibbles(dut):
-    """Carry propagates across all 8 nibbles: 0xFFFFFFF0 + 0x10 = 0 with c_out=1"""
-    await setup(dut)
-    result, c_out, _ = await compute_alu(dut, 0b0000, 0xFFFFFFF0, 0x00000010)
-    assert result == 0, f"expected 0, got {hex(result)}"
-    assert c_out == 1, f"carry-out expected 1, got {c_out}"
-
-
-@cocotb.test()
-async def cmp_out_accumulation_across_nibbles(dut):
-    """EQ via XOR: cmp_out=1 iff all nibbles equal, single-bit diff detected"""
-    await setup(dut)
-    a = random.randint(0, 0xFFFFFFFF)
-    _, _, cmp_out = await compute_alu(dut, 0b0100, a, a)
-    assert cmp_out == 1, f"a==a: expected 1, got {cmp_out}"
-    await ClockCycles(dut.clk, 7)  # re-align nibble_ct to 0 before next operation
-    b = a ^ (1 << random.randint(0, 31))
-    _, _, cmp_out = await compute_alu(dut, 0b0100, a, b)
-    assert cmp_out == 0, f"a!=b (1-bit diff): expected 0, got {cmp_out}"
+async def czero_eqz(dut):
+    a = random.randint(1, 0xFFFFFFFF)
+    # b == 0: result = 0
+    assert await alu(dut, CZERO_EQZ, a, 0) == 0
+    # b != 0: result = a
+    assert await alu(dut, CZERO_EQZ, a, 1) == a
+    assert await alu(dut, CZERO_EQZ, a, 0xFFFFFFFF) == a

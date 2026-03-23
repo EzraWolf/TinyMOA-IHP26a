@@ -497,10 +497,10 @@ def encode_c_add(rd, rs2):
 
 def encode_c_mul(rd, rs2):
     """
-    Compressed Multiply (TinyMOA custom, Q2 funct3=101)
-    C.MUL rd, rs2   →   rd = rd * rs2[15:0]
+    Compressed Multiply (Zcb CA-Type, Q1 funct6=100111 funct2=10)
+    C.MUL rd', rs2'   rd' = rd'[15:0] * rs2'[15:0], result truncated to 32 bits.
 
-    Encoding: instr[15:13]=101, instr[1:0]=10, rd in [10:7], rs2 in [5:2].
-    Uses full 4-bit register fields (not compressed 3-bit rs1'/rs2').
+    rd and rs2 are full register numbers (x8-x15) or prime indices (0-7).
+    Lower 3 bits used as prime register index (maps to x8-x15).
     """
-    return (0b101 << 13) | (rd << 7) | (rs2 << 2) | 0b10
+    return encode_ca_type(0b100111, rd & 0x7, 0b10, rs2 & 0x7, 0b01)

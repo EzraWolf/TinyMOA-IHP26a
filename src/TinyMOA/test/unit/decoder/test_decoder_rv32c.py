@@ -25,7 +25,7 @@ async def decode(dut, instr_val):
 
 
 @cocotb.test()
-async def caddi4spn_rd_and_sp_as_rs1(dut):
+async def c_addi4spn_rd_and_sp_as_rs1(dut):
     """C.ADDI4SPN: rd'=x10 (rd_p=2 -> x10), rs1=sp(x2)"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_addi4spn(2, 16))  # rd_p=2 -> x10, imm=16
@@ -35,7 +35,7 @@ async def caddi4spn_rd_and_sp_as_rs1(dut):
 
 
 @cocotb.test()
-async def clw_load_fields(dut):
+async def c_lw_load_fields(dut):
     """C.LW: is_load, mem_opcode=word, rd'/rs1' fields"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_lw(0, 1, 0))  # rd_p=0->x8, rs1_p=1->x9
@@ -92,7 +92,7 @@ async def zcb_byte_halfword_load_store(dut):
 
 
 @cocotb.test()
-async def cnop(dut):
+async def c_nop(dut):
     """C.NOP: is_alu_imm, rd=x0, imm=0"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_nop())
@@ -103,7 +103,7 @@ async def cnop(dut):
 
 
 @cocotb.test()
-async def caddi_rd_rs1_immediate(dut):
+async def c_addi_rd_rs1_immediate(dut):
     """C.ADDI: rd==rs1, is_alu_imm, ADD opcode"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_addi(5, 3))
@@ -115,7 +115,7 @@ async def caddi_rd_rs1_immediate(dut):
 
 
 @cocotb.test()
-async def cjal_rd_is_ra(dut):
+async def c_jal_rd_is_ra(dut):
     """C.JAL: is_jal, rd=x1 (ra)"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_jal(64))
@@ -125,7 +125,7 @@ async def cjal_rd_is_ra(dut):
 
 
 @cocotb.test()
-async def cli_rs1_is_x0(dut):
+async def c_li_rs1_is_x0(dut):
     """C.LI: is_alu_imm, rs1=x0, rd=dest"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_li(6, 5))
@@ -136,7 +136,7 @@ async def cli_rs1_is_x0(dut):
 
 
 @cocotb.test()
-async def clui_is_lui(dut):
+async def c_lui_is_lui(dut):
     """C.LUI: is_lui, rd, upper immediate placed at [31:12]"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_lui(7, 1 << 12))  # nzimm[16:12]=1 -> imm=0x1000
@@ -148,7 +148,7 @@ async def clui_is_lui(dut):
 
 
 @cocotb.test()
-async def caddi16sp_immediate_scale(dut):
+async def c_addi16sp_immediate_scale(dut):
     """C.ADDI16SP: is_alu_imm, rd=rs1=sp(x2), scrambled immediate reconstructed"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_addi16sp(16))
@@ -159,7 +159,7 @@ async def caddi16sp_immediate_scale(dut):
 
 
 @cocotb.test()
-async def csrli_opcode(dut):
+async def c_srli_opcode(dut):
     """C.SRLI: is_alu_imm, SRL opcode, rd'==rs1'"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_srli(0, 4))  # rd_p=0->x8
@@ -170,7 +170,7 @@ async def csrli_opcode(dut):
 
 
 @cocotb.test()
-async def csrai_opcode(dut):
+async def c_srai_opcode(dut):
     """C.SRAI: is_alu_imm, SRA opcode"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_srai(0, 4))
@@ -179,7 +179,7 @@ async def csrai_opcode(dut):
 
 
 @cocotb.test()
-async def candi_opcode(dut):
+async def c_andi_opcode(dut):
     """C.ANDI: is_alu_imm, AND opcode"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_andi(0, 7))
@@ -188,7 +188,7 @@ async def candi_opcode(dut):
 
 
 @cocotb.test()
-async def csub_cxor_cor_cand_opcodes(dut):
+async def c_sub_cxor_cor_cand_opcodes(dut):
     """C.SUB/XOR/OR/AND: is_alu_reg, correct alu_opcode"""
     await setup(dut)
     cases = [
@@ -206,7 +206,7 @@ async def csub_cxor_cor_cand_opcodes(dut):
 
 
 @cocotb.test()
-async def cj_rd_is_x0(dut):
+async def c_j_rd_is_x0(dut):
     """C.J: is_jal, rd=x0 (discard)"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_j(64))
@@ -215,7 +215,7 @@ async def cj_rd_is_x0(dut):
 
 
 @cocotb.test()
-async def cbeqz_branch_and_xor_opcode(dut):
+async def c_beqz_branch_and_xor_opcode(dut):
     """C.BEQZ: is_branch, alu_opcode=XOR, rs1'"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_beqz(0, 8))  # rs1_p=0->x8
@@ -226,7 +226,7 @@ async def cbeqz_branch_and_xor_opcode(dut):
 
 
 @cocotb.test()
-async def cbnez_branch_and_xor_opcode(dut):
+async def c_bnez_branch_and_xor_opcode(dut):
     """C.BNEZ: is_branch, alu_opcode=XOR, rs1'"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_bnez(0, 8))
@@ -238,7 +238,7 @@ async def cbnez_branch_and_xor_opcode(dut):
 
 
 @cocotb.test()
-async def cslli_opcode(dut):
+async def c_slli_opcode(dut):
     """C.SLLI: is_alu_imm, SLL opcode, rd==rs1"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_slli(5, 3))
@@ -249,7 +249,7 @@ async def cslli_opcode(dut):
 
 
 @cocotb.test()
-async def clwsp_sp_as_rs1(dut):
+async def c_lwsp_sp_as_rs1(dut):
     """C.LWSP: is_load, rs1=sp(x2)"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_lwsp(5, 0))
@@ -260,7 +260,7 @@ async def clwsp_sp_as_rs1(dut):
 
 
 @cocotb.test()
-async def cjr_rs1_rd_x0(dut):
+async def c_jr_rs1_rd_x0(dut):
     """C.JR: is_jalr, rd=x0"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_jr(5))
@@ -271,7 +271,7 @@ async def cjr_rs1_rd_x0(dut):
 
 
 @cocotb.test()
-async def cmv_is_alu_reg(dut):
+async def c_mv_is_alu_reg(dut):
     """C.MV: is_alu_reg, ADD opcode, rs1=x0"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_mv(5, 3))
@@ -282,7 +282,7 @@ async def cmv_is_alu_reg(dut):
 
 
 @cocotb.test()
-async def cadd_rd_rs1_same(dut):
+async def c_add_rd_rs1_same(dut):
     """C.ADD: is_alu_reg, ADD opcode, rd==rs1"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_add(5, 3))
@@ -293,7 +293,7 @@ async def cadd_rd_rs1_same(dut):
 
 
 @cocotb.test()
-async def cjalr_rd_is_ra(dut):
+async def c_jalr_rd_is_ra(dut):
     """C.JALR: is_jalr, rd=x1 (ra)"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_jalr(5))
@@ -303,7 +303,7 @@ async def cjalr_rd_is_ra(dut):
 
 
 @cocotb.test()
-async def cmul_nonstandard_opcode(dut):
+async def c_mul_nonstandard_opcode(dut):
     """C.MUL: Q2 funct3=101, alu_opcode=1010"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_mul(8, 9))  # rd_p=0->x8, rs2_p=1->x9
@@ -312,7 +312,7 @@ async def cmul_nonstandard_opcode(dut):
 
 
 @cocotb.test()
-async def cswsp_sp_as_rs1(dut):
+async def c_swsp_sp_as_rs1(dut):
     """C.SWSP: is_store, rs1=sp(x2)"""
     await setup(dut)
     await decode(dut, rv32c.encode_c_swsp(5, 0))

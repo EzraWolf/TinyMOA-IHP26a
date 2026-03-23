@@ -99,15 +99,7 @@ def test_tinymoa_integration():
 
 
 def test_alu_unit():
-    run_test("alu", "alu", dir="alu")
-
-
-def test_multiplier_unit():
-    run_test("multiplier", "multiplier", dir="alu")
-
-
-def test_shifter_unit():
-    run_test("shifter", "shifter", dir="alu")
+    run_test("alu", "alu")
 
 
 def test_bootloader_unit():
@@ -119,11 +111,20 @@ def test_counter_unit():
 
 
 def test_cpu_unit():
-    run_test("cpu", "cpu")
+    run_test(
+        "cpu",
+        "cpu",
+        extra_sources=[
+            "counter.v",
+            "decoder.v",
+            "registers.v",
+            "alu.v",
+        ],
+    )
 
 
 def test_dcim_unit():
-    run_test("dcim", "dcim", dir="dcim")
+    run_test("dcim", "dcim", dir="dcim", extra_sources=["dcim/compressor.v"])
 
 
 def test_decoder_rv32c_unit():
