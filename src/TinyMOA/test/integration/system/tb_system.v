@@ -27,8 +27,8 @@ module tb_system (
     reg [1:0] par_addr;
     reg       dbg_en;
 
-    wire [7:0] ui;
-    assign ui = {dbg_en, par_addr, par_oe, par_we, par_cpu_nrst, par_space, is_parallel};
+    wire [7:0] ui_in;
+    assign ui_in = {dbg_en, par_addr, par_oe, par_we, par_cpu_nrst, par_space, is_parallel};
 
     // Bidirectional data: cocotb drives uio_in[7:4] for writes
     reg  [3:0] par_data_in;
@@ -36,22 +36,23 @@ module tb_system (
     assign uio_in = {par_data_in, 4'b0};
 
     // Outputs
-    wire [7:0] uo;
+    wire [7:0] uo_out;
     wire [7:0] uio_out;
     wire [7:0] uio_oe;
 
     // Output decode
-    wire       dbg_strobe    = uo[0];
-    wire       dbg_frame_end = uo[1];
-    wire       par_rdy       = uo[3];
-    wire [3:0] par_addr_out  = uo[7:4];
+    wire       dbg_strobe    = uo_out[0];
+    wire       dbg_frame_end = uo_out[1];
+    wire       par_rdy       = uo_out[3];
+    wire [3:0] par_addr_out  = uo_out[7:4];
     wire [3:0] par_data_out  = uio_out[7:4];
 
     tinymoa_top dut (
         .clk     (clk),
         .nrst    (nrst),
-        .ui      (ui),
-        .uo      (uo),
+        .ena     (1'b1),
+        .ui_in   (ui_in),
+        .uo_out  (uo_out),
         .uio_in  (uio_in),
         .uio_out (uio_out),
         .uio_oe  (uio_oe)

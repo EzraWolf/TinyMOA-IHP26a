@@ -16,21 +16,22 @@
 module tinymoa_top (
     input  wire        clk,
     input  wire        nrst,
-    input  wire [7:0]  ui,
-    output wire [7:0]  uo,
+    input  wire        ena,
+    input  wire [7:0]  ui_in,
+    output wire [7:0]  uo_out,
     input  wire [7:0]  uio_in,
     output wire [7:0]  uio_out,
     output wire [7:0]  uio_oe
 );
 
     // === Input decode ===
-    wire       is_parallel  = ui[0];
-    wire       par_space    = ui[1];
-    wire       par_cpu_nrst = ui[2];
-    wire       par_we       = ui[3] & is_parallel;
-    wire       par_oe       = ui[4] & is_parallel;
-    wire [1:0] par_addr     = ui[6:5];
-    wire       dbg_en       = ui[7];
+    wire       is_parallel  = ui_in[0];
+    wire       par_space    = ui_in[1];
+    wire       par_cpu_nrst = ui_in[2];
+    wire       par_we       = ui_in[3] & is_parallel;
+    wire       par_oe       = ui_in[4] & is_parallel;
+    wire [1:0] par_addr     = ui_in[6:5];
+    wire       dbg_en       = ui_in[7];
 
     wire par_is_tcm  = is_parallel & ~par_space;
     wire par_is_mmio = is_parallel &  par_space;
@@ -132,7 +133,8 @@ module tinymoa_top (
 
     wire [31:0] tcm_a_dout;
 
-    assign cpu_mem_ready = cpu_is_mmio ? dcim_mmio_ready : 1'b1;
+    wire cpu_bus_active = cpu_mem_read | cpu_mem_write;
+    assign cpu_mem_ready = cpu_bus_active ? (cpu_is_mmio ? dcim_mmio_ready : 1'b1) : 1'b0;
     assign cpu_mem_rdata = cpu_is_mmio ? dcim_mmio_rdata : tcm_a_dout;
 
     wire cpu_nrst = nrst & (is_parallel ? par_cpu_nrst : 1'b1);
@@ -220,7 +222,7 @@ module tinymoa_top (
         .a_wen  (cpu_mem_write & cpu_is_tcm),
         .a_din  (cpu_mem_wdata),
         .a_dout (tcm_a_dout),
-        .a_addr (cpu_mem_addr[11:2]),
+        .a_addr (cpu_mem_addr[9:0]),
         .b_en   (tcm_b_en),
         .b_wen  (tcm_b_wen),
         .b_din  (tcm_b_din),
@@ -295,7 +297,7 @@ module tinymoa_top (
     // uo[7:4]: SER = NCS lines, PAR = word address [3:0]
     // uo[3]:   SER = qspi_sck,  PAR = par_rdy
     // uo[2:0]: always dbg/qspi
-    assign uo = {
+    assign uo_out = {
         is_parallel ? par_word_addr[3:0]
                     : {cs_peri_n, cs_ram_b_n, cs_ram_a_n, cs_flash_n},
         is_parallel ? par_rdy : qspi_sck,
@@ -307,6 +309,6 @@ module tinymoa_top (
     assign uio_out = is_parallel ? {par_read_nibble, 4'b0} : 8'b0;
     assign uio_oe  = is_parallel ? {{4{par_oe}}, 4'b0}     : 8'b0;
 
-    wire _unused = &{cpu_mem_size, 1'b0};
+    wire _unused = &{cpu_mem_size, ena, 1'b0};
 
 endmodule
