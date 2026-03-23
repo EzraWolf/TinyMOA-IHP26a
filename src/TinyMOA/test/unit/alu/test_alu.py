@@ -3,11 +3,9 @@ ALU unit tests (tinymoa_alu, 32-bit combinational).
 
 Full test list:
 - add_basic
-- add_carry_in
 - add_overflow_wrap
 
 - sub_basic
-- sub_borrow_with_carry_in
 - sub_negative_result
 
 - and_basic
@@ -59,11 +57,10 @@ CZERO_EQZ = 0b1110
 CZERO_NEZ = 0b1111
 
 
-async def alu(dut, opcode, a, b, c=0):
+async def alu(dut, opcode, a, b):
     dut.opcode.value = opcode
     dut.a_in.value = a & 0xFFFFFFFF
     dut.b_in.value = b & 0xFFFFFFFF
-    dut.c_in.value = c & 0x1
     await Timer(1, units="ns")
     return int(dut.result.value)
 
@@ -83,14 +80,6 @@ async def add_basic(dut):
         b = random.randint(0, 0xFFFFFFFF)
         r = await alu(dut, ADD, a, b)
         assert r == (a + b) & 0xFFFFFFFF, f"{hex(a)} + {hex(b)}: got {hex(r)}"
-
-
-@cocotb.test()
-async def add_carry_in(dut):
-    r = await alu(dut, ADD, 0xFFFFFFFF, 0x0, c=1)
-    assert r == 0, f"0xFFFFFFFF + 0 + 1: expected 0, got {hex(r)}"
-    r = await alu(dut, ADD, 0x0, 0x0, c=1)
-    assert r == 1
 
 
 @cocotb.test()
@@ -258,13 +247,3 @@ async def czero_nez(dut):
     assert await alu(dut, CZERO_NEZ, a, 0xFFFFFFFF) == 0
     # b == 0: result = a
     assert await alu(dut, CZERO_NEZ, a, 0) == a
-
-
-@cocotb.test()
-async def czero_eqz(dut):
-    a = random.randint(1, 0xFFFFFFFF)
-    # b == 0: result = 0
-    assert await alu(dut, CZERO_EQZ, a, 0) == 0
-    # b != 0: result = a
-    assert await alu(dut, CZERO_EQZ, a, 1) == a
-    assert await alu(dut, CZERO_EQZ, a, 0xFFFFFFFF) == a

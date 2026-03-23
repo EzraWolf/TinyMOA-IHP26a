@@ -108,8 +108,12 @@ async def write_then_read(dut):
 
     for reg in STORAGE_REGS:
         v1, v2 = await read_regs(dut, reg, reg)
-        assert v1 == values[reg], f"x{reg} rs1: expected {hex(values[reg])}, got {hex(v1)}"
-        assert v2 == values[reg], f"x{reg} rs2: expected {hex(values[reg])}, got {hex(v2)}"
+        assert v1 == values[reg], (
+            f"x{reg} rs1: expected {hex(values[reg])}, got {hex(v1)}"
+        )
+        assert v2 == values[reg], (
+            f"x{reg} rs2: expected {hex(values[reg])}, got {hex(v2)}"
+        )
 
 
 @cocotb.test()
@@ -157,7 +161,9 @@ async def no_cross_contamination_between_regs(dut):
         await write_reg(dut, reg, values[reg])
     for reg in STORAGE_REGS:
         v1, _ = await read_regs(dut, reg, reg)
-        assert v1 == values[reg], f"x{reg}: contaminated, expected {hex(values[reg])}, got {hex(v1)}"
+        assert v1 == values[reg], (
+            f"x{reg}: contaminated, expected {hex(values[reg])}, got {hex(v1)}"
+        )
 
 
 @cocotb.test()

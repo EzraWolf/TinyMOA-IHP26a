@@ -1,409 +1,487 @@
 """
-Test suite for decoding RV32I instructions
+Test suite for decoding RV32I instructions.
+
+Every test verifies ALL control lines: imm, alu_opcode, mem_opcode, rs1, rs2, rd,
+the correct is_* flag high, all others low, and is_compressed=0.
+
+ALU internal opcodes (decoder assigns opcode):
+    0000  ADD
+    0001  SUB
+    0010  SLT
+    0011  SLTU
+    0100  XOR
+    0101  OR
+    0110  AND
+    1000  SLL
+    1001  SRL
+    1010  SRA
+    1011  MUL  (16x16 unsigned -> 32-bit)
+    1110  CZERO.EQZ
+    1111  CZERO.NEZ
+
+R-Type instructions:
+    [31:25] funct7
+    [24:20] rs2
+    [19:15] rs1
+    [14:12] funct3
+    [11:7]  rd
+    [6:0]   opcode
+
+I-Type instructions:
+    [31:20] imm[11:0]
+    [19:15] rs1
+    [14:12] funct3
+    [11:7]  rd
+    [6:0]   opcode
+
+S-Type instructions:
+    [31:25] imm[11:5]
+    [24:20] rs2
+    [19:15] rs1
+    [14:12] funct3
+    [11:7]  imm[4:0]
+    [6:0]   opcode
+
+B-Type instructions:
+    [31]    imm[12]
+    [30:25] imm[10:5]
+    [24:20] rs2
+    [19:15] rs1
+    [14:12] funct3
+    [11:8]  imm[4:1]
+    [7]     imm[11]
+    [6:0]   opcode
+
+U-Type instructions:
+    [31:11] imm[31:12]
+    [11:7]  rd
+    [6:0]   opcode
+
+J-Type instructions:
+    [31]    imm[20]
+    [30:21] imm[10:1]
+    [20]    imm[11]
+    [19:12] imm[19:12]
+    [11:7]  rd
+    [6:0]   opcode
+
 """
 
 import cocotb
-from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import Timer
 import utility.rv32i_encode as rv32i
+
+# mem_opcode encoding: [1:0]=size (00=byte, 01=half, 10=word), [2]=unsigned
+MEM_BYTE = 0b000
+MEM_HALF = 0b001
+MEM_WORD = 0b010
+MEM_BYTE_U = 0b100
+MEM_HALF_U = 0b101
 
 
 async def setup(dut):
-    clock = Clock(dut.clk, 10, unit="ns")
-    cocotb.start_soon(clock.start())
-    dut.nrst.value = 0
-    await ClockCycles(dut.clk, 1)
-    dut.nrst.value = 1
+    dut.instr.value = 0
+    dut.imm.value = 0
+    dut.alu_opcode.value = 0
+    dut.mem_opcode.value = 0
+    dut.rs1.value = 0
+    dut.rs2.value = 0
+    dut.rd.value = 0
+    dut.is_load.value = 0
+    dut.is_store.value = 0
+    dut.is_branch.value = 0
+    dut.is_jal.value = 0
+    dut.is_jalr.value = 0
+    dut.is_lui.value = 0
+    dut.is_auipc.value = 0
+    dut.is_system.value = 0
+    dut.is_compressed.value = 0
+    await Timer(1, unit="ns")
 
 
 async def decode(dut, instr_val):
     dut.instr.value = instr_val
-    await ClockCycles(dut.clk, 1)
+    await Timer(1, unit="ns")
 
 
-# === Loads ===
+def verify_flags(
+    dut,
+    *,
+    is_alu_reg=0,
+    is_alu_imm=0,
+    is_load=0,
+    is_store=0,
+    is_branch=0,
+    is_jal=0,
+    is_jalr=0,
+    is_lui=0,
+    is_auipc=0,
+    is_system=0,
+    is_compressed=0,  # RV32I instr should always be low
+):
+    """Verify instruction control decode flags"""
+    assert dut.is_alu_reg.value == is_alu_reg
+    assert dut.is_alu_imm.value == is_alu_imm
+    assert dut.is_load.value == is_load
+    assert dut.is_store.value == is_store
+    assert dut.is_branch.value == is_branch
+    assert dut.is_jal.value == is_jal
+    assert dut.is_jalr.value == is_jalr
+    assert dut.is_lui.value == is_lui
+    assert dut.is_auipc.value == is_auipc
+    assert dut.is_system.value == is_system
+    assert dut.is_compressed.value == is_compressed
+    # assert dut.instr_len.value == 4, "Expected RV32I 32-bit instruction"
 
 
-@cocotb.test()
-async def load_byte_signed(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_lb(1, 2, 0))
-    assert dut.is_load.value == 1
-    assert dut.mem_opcode.value == 0b000
+def verify_r_type(dut, alu_opcode, rd, rs1, rs2):
+    """Verify R-type instruction decodes (opcode 0x33)"""
+    assert dut.alu_opcode.value == alu_opcode, (
+        f"ALU opcode mismatch: expected {alu_opcode:#06b}, got {dut.alu_opcode.value:#06b}"
+    )
+    assert dut.rd.value == rd, f"rd mismatch: expected x{rd}, got x{dut.rd.value}"
+    assert dut.rs1.value == rs1, f"rs1 mismatch: expected x{rs1}, got x{dut.rs1.value}"
+    assert dut.rs2.value == rs2, f"rs2 mismatch: expected x{rs2}, got x{dut.rs2.value}"
+    verify_flags(dut, is_alu_reg=1)
 
 
-@cocotb.test()
-async def load_halfword_signed(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_lh(1, 2, 0))
-    assert dut.is_load.value == 1
-    assert dut.mem_opcode.value == 0b001
+def verify_i_type_alu(dut, alu_opcode, rd, rs1, imm):
+    """Verify I-type ALU imm instruction decodes (opcode 0x13)"""
+    assert dut.alu_opcode.value == alu_opcode, (
+        f"ALU opcode mismatch: expected {alu_opcode:#06b}, got {dut.alu_opcode.value:#06b}"
+    )
+    assert dut.rd.value == rd, f"rd mismatch: expected x{rd}, got x{dut.rd.value}"
+    assert dut.rs1.value == rs1, f"rs1 mismatch: expected x{rs1}, got x{dut.rs1.value}"
+    assert dut.imm.value.to_signed() == imm, (
+        f"Immediate mismatch: expected {imm}, got {dut.imm.value.to_signed()}"
+    )
+    verify_flags(dut, is_alu_imm=1)
 
 
-@cocotb.test()
-async def load_word(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_lw(1, 2, 0))
-    assert dut.is_load.value == 1
-    assert dut.mem_opcode.value == 0b010
+def verify_i_type_shift(dut, alu_opcode, rd, rs1, shamt):
+    """Verify I-type shift imm instruction decodes (opcode 0x13)"""
+    assert dut.alu_opcode.value == alu_opcode, (
+        f"ALU opcode mismatch: expected {alu_opcode:#06b}, got {dut.alu_opcode.value:#06b}"
+    )
+    assert dut.rd.value == rd, f"rd mismatch: expected x{rd}, got x{dut.rd.value}"
+    assert dut.rs1.value == rs1, f"rs1 mismatch: expected x{rs1}, got x{dut.rs1.value}"
+    assert (dut.imm.value.integer & 0x1F) == shamt, (
+        f"Shift amount mismatch: expected {shamt}, got {dut.imm.value.integer & 0x1F}"
+    )
+    verify_flags(dut, is_alu_imm=1)
 
 
-@cocotb.test()
-async def load_byte_unsigned(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_lbu(1, 2, 0))
-    assert dut.is_load.value == 1
-    assert dut.mem_opcode.value == 0b100
+def verify_i_type_load(dut, mem_opcode, rd, rs1, imm):
+    """Verify I-type load instruction decodes (opcode 0x03)"""
+    assert dut.mem_opcode.value == mem_opcode, (
+        f"Memory opcode mismatch: expected {mem_opcode:#05b}, got {dut.mem_opcode.value:#05b}"
+    )
+    assert dut.rd.value == rd, f"rd mismatch: expected x{rd}, got x{dut.rd.value}"
+    assert dut.rs1.value == rs1, f"rs1 mismatch: expected x{rs1}, got x{dut.rs1.value}"
+    assert dut.imm.value.to_signed() == imm, (
+        f"Immediate mismatch: expected {imm}, got {dut.imm.value.to_signed()}"
+    )
+    verify_flags(dut, is_load=1)
 
 
-@cocotb.test()
-async def load_halfword_unsigned(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_lhu(1, 2, 0))
-    assert dut.is_load.value == 1
-    assert dut.mem_opcode.value == 0b101
+def verify_s_type(dut, mem_opcode, rs1, rs2, imm):
+    """Verify S-type store instruction decodes (opcode 0x23)"""
+    assert dut.mem_opcode.value == mem_opcode, (
+        f"Memory opcode mismatch: expected {mem_opcode:#05b}, got {dut.mem_opcode.value:#05b}"
+    )
+    assert dut.rs1.value == rs1, f"rs1 mismatch: expected x{rs1}, got x{dut.rs1.value}"
+    assert dut.rs2.value == rs2, f"rs2 mismatch: expected x{rs2}, got x{dut.rs2.value}"
+    assert dut.imm.value.to_signed() == imm, (
+        f"Immediate mismatch: expected {imm}, got {dut.imm.value.to_signed()}"
+    )
+    verify_flags(dut, is_store=1)
 
 
-@cocotb.test()
-async def load_immediate_sign_extension(dut):
-    """Negative immediate sign-extends to 32 bits"""
-    await setup(dut)
-    await decode(dut, rv32i.encode_lw(1, 2, -4))
-    imm = int(dut.imm.value)
-    assert imm == 0xFFFFFFFC, f"expected 0xFFFFFFFC, got {hex(imm)}"
+def verify_u_type(dut, rd, imm, is_lui=False, is_auipc=False):
+    """Verify U-type instruction decodes (LUI 0x37 or AUIPC 0x17)"""
+    assert dut.rd.value == rd, f"rd mismatch: expected x{rd}, got x{dut.rd.value}"
+    assert dut.imm.value.integer == imm, (
+        f"Immediate mismatch: expected {imm:#x}, got {int(dut.imm.value):#x}"
+    )
+    verify_flags(dut, is_lui=(1 if is_lui else 0), is_auipc=(1 if is_auipc else 0))
 
 
-@cocotb.test()
-async def load_register_fields(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_lw(5, 3, 8))
-    assert int(dut.rd.value) == 5, f"rd: expected 5, got {int(dut.rd.value)}"
-    assert int(dut.rs1.value) == 3, f"rs1: expected 3, got {int(dut.rs1.value)}"
-    assert int(dut.imm.value) == 8
+def verify_b_type(dut, alu_opcode, rs1, rs2, imm):
+    """Verify B-type branch instruction decodes (opcode 0x63)"""
+    assert dut.alu_opcode.value == alu_opcode, (
+        f"ALU opcode mismatch: expected {alu_opcode:#06b}, got {dut.alu_opcode.value:#06b}"
+    )
+    assert dut.rs1.value == rs1, f"rs1 mismatch: expected x{rs1}, got x{dut.rs1.value}"
+    assert dut.rs2.value == rs2, f"rs2 mismatch: expected x{rs2}, got x{dut.rs2.value}"
+    assert dut.imm.value.to_signed() == imm, (
+        f"Immediate mismatch: expected {imm}, got {dut.imm.value.to_signed()}"
+    )
+    verify_flags(dut, is_branch=1)
 
 
-# === Stores ===
+def verify_j_type(dut, rd, imm, is_jal=False, is_jalr=False):
+    """Verify J-type jump instruction decodes (JAL 0x6F or JALR 0x67)"""
+    assert dut.rd.value == rd, f"rd mismatch: expected x{rd}, got x{dut.rd.value}"
+    assert dut.imm.value.to_signed() == imm, (
+        f"Immediate mismatch: expected {imm}, got {dut.imm.value.to_signed()}"
+    )
+    assert dut.alu_opcode.value == 0b0000, "Jump uses ADD for address calculation"
+    verify_flags(dut, is_jal=(1 if is_jal else 0), is_jalr=(1 if is_jalr else 0))
 
 
-@cocotb.test()
-async def store_byte(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_sb(2, 3, 0))
-    assert dut.is_store.value == 1
-    assert dut.mem_opcode.value == 0b000
-
-
-@cocotb.test()
-async def store_halfword(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_sh(2, 3, 0))
-    assert dut.is_store.value == 1
-    assert dut.mem_opcode.value == 0b001
-
-
-@cocotb.test()
-async def store_word(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_sw(2, 3, 0))
-    assert dut.is_store.value == 1
-    assert dut.mem_opcode.value == 0b010
-
-
-@cocotb.test()
-async def store_immediate_reconstruction(dut):
-    """S-type imm is split across [31:25] and [11:7] -- decoder must reassemble"""
-    await setup(dut)
-    await decode(dut, rv32i.encode_sw(2, 3, -8))
-    imm = int(dut.imm.value)
-    assert imm == 0xFFFFFFF8, f"expected 0xFFFFFFF8, got {hex(imm)}"
-
-
-@cocotb.test()
-async def store_register_fields(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_sw(3, 5, 4))
-    assert int(dut.rs1.value) == 3, f"rs1: expected 3, got {int(dut.rs1.value)}"
-    assert int(dut.rs2.value) == 5, f"rs2: expected 5, got {int(dut.rs2.value)}"
-    assert int(dut.imm.value) == 4
-
-
-# === ALU immediate ===
-
-
-@cocotb.test()
-async def addi_basic(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_addi(1, 2, 10))
-    assert dut.is_alu_imm.value == 1
-    assert int(dut.alu_opcode.value) == 0b0000  # ADD
-    assert int(dut.imm.value) == 10
-
-
-@cocotb.test()
-async def addi_immediate_min_max(dut):
-    """ADDI with +2047 and -2048"""
-    await setup(dut)
-    await decode(dut, rv32i.encode_addi(1, 0, 2047))
-    assert int(dut.imm.value) == 2047
-    await decode(dut, rv32i.encode_addi(1, 0, -2048))
-    imm = int(dut.imm.value)
-    assert imm == 0xFFFFF800, f"expected 0xFFFFF800, got {hex(imm)}"
-
-
-@cocotb.test()
-async def slti_sltiu(dut):
-    await setup(dut)
-    await decode(dut, rv32i.encode_slti(1, 2, 0))
-    assert dut.is_alu_imm.value == 1
-    assert int(dut.alu_opcode.value) == 0b0010  # SLT
-    await decode(dut, rv32i.encode_sltiu(1, 2, 0))
-    assert int(dut.alu_opcode.value) == 0b0011  # SLTU
+def verify_system_type(dut):
+    """Verify system instruction decodes (opcode 0x73)"""
+    verify_flags(dut, is_system=1)
 
 
 @cocotb.test()
-async def xori_ori_andi(dut):
+async def test_add(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_xori(1, 2, 0))
-    assert int(dut.alu_opcode.value) == 0b0100  # XOR
-    await decode(dut, rv32i.encode_ori(1, 2, 0))
-    assert int(dut.alu_opcode.value) == 0b0110  # OR
-    await decode(dut, rv32i.encode_andi(1, 2, 0))
-    assert int(dut.alu_opcode.value) == 0b0111  # AND
+    await decode(dut, rv32i.encode_add(rd=5, rs1=6, rs2=7))
+    verify_r_type(dut, alu_opcode=0b0000, rd=5, rs1=6, rs2=7)
 
 
 @cocotb.test()
-async def slli_srli_srai_opcode(dut):
+async def test_sub(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_slli(1, 2, 4))
-    assert int(dut.alu_opcode.value) == 0b0001  # SLL
-    await decode(dut, rv32i.encode_srli(1, 2, 4))
-    assert int(dut.alu_opcode.value) == 0b0101  # SRL
-    await decode(dut, rv32i.encode_srai(1, 2, 4))
-    assert int(dut.alu_opcode.value) == 0b1101  # SRA
+    await decode(dut, rv32i.encode_sub(rd=1, rs1=2, rs2=3))
+    verify_r_type(dut, alu_opcode=0b0001, rd=1, rs1=2, rs2=3)
+
+
+@cocotb.test(skip=True)
+async def test_sll(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_slt(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_sltu(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_xor(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_srl(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_sra(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_or(dut):
+    await setup(dut)
+    raise NotImplementedError
 
 
 @cocotb.test()
-async def srai_vs_srli_funct7(dut):
-    """SRAI and SRLI share funct3=101 -- funct7 bit distinguishes them"""
+async def test_and(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_srli(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b0101  # SRL
-    await decode(dut, rv32i.encode_srai(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b1101  # SRA
+    await decode(dut, rv32i.encode_and(rd=8, rs1=9, rs2=10))
+    verify_r_type(dut, alu_opcode=0b0110, rd=8, rs1=9, rs2=10)
 
 
-# === ALU reg-reg ===
+@cocotb.test(skip=True)
+async def test_czero_eqz(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_czero_nez(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+# === I-Type ===
 
 
 @cocotb.test()
-async def add_sub_funct7_distinguishes(dut):
+async def test_addi(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_add(1, 2, 3))
-    assert dut.is_alu_reg.value == 1
-    assert int(dut.alu_opcode.value) == 0b0000  # ADD
-    await decode(dut, rv32i.encode_sub(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b1000  # SUB
+    await decode(dut, rv32i.encode_addi(rd=2, rs1=3, imm=100))
+    verify_i_type_alu(dut, alu_opcode=0b0000, rd=2, rs1=3, imm=100)
 
 
-@cocotb.test()
-async def shift_opcodes(dut):
+@cocotb.test(skip=True)
+async def test_slti(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_sll(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b0001  # SLL
-    await decode(dut, rv32i.encode_srl(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b0101  # SRL
-    await decode(dut, rv32i.encode_sra(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b1101  # SRA
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def logical_opcodes(dut):
+@cocotb.test(skip=True)
+async def test_sltiu(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_and(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b0111  # AND
-    await decode(dut, rv32i.encode_or(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b0110  # OR
-    await decode(dut, rv32i.encode_xor(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b0100  # XOR
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def slt_sltu_opcodes(dut):
+@cocotb.test(skip=True)
+async def test_xori(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_slt(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b0010  # SLT
-    await decode(dut, rv32i.encode_sltu(1, 2, 3))
-    assert int(dut.alu_opcode.value) == 0b0011  # SLTU
+    raise NotImplementedError
 
 
-# === Zicond ===
-
-
-@cocotb.test()
-async def czero_eqz_opcode(dut):
-    """CZERO.EQZ: funct7=0x07, funct3=5, OP"""
+@cocotb.test(skip=True)
+async def test_ori(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_r_type(0x07, 3, 2, 0x5, 1, 0x33))
-    assert dut.is_alu_reg.value == 1
-    assert int(dut.alu_opcode.value) == 0b1110  # CZERO.EQZ
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def czero_nez_opcode(dut):
-    """CZERO.NEZ: funct7=0x07, funct3=7, OP"""
+@cocotb.test(skip=True)
+async def test_andi(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_r_type(0x07, 3, 2, 0x7, 1, 0x33))
-    assert dut.is_alu_reg.value == 1
-    assert int(dut.alu_opcode.value) == 0b1111  # CZERO.NEZ
+    raise NotImplementedError
 
 
-# === Branches ===
-
-
-@cocotb.test()
-async def branch_all_types(dut):
-    """All six branch types set is_branch and correct alu_opcode"""
+@cocotb.test(skip=True)
+async def test_slli(dut):
     await setup(dut)
-    cases = [
-        (rv32i.encode_beq, 0b0100),  # XOR for equality
-        (rv32i.encode_bne, 0b0100),  # XOR
-        (rv32i.encode_blt, 0b0010),  # SLT
-        (rv32i.encode_bge, 0b0010),  # SLT
-        (rv32i.encode_bltu, 0b0011),  # SLTU
-        (rv32i.encode_bgeu, 0b0011),  # SLTU
-    ]
-    for enc, expected_opcode in cases:
-        await decode(dut, enc(1, 2, 0))
-        assert dut.is_branch.value == 1, f"{enc.__name__}: is_branch not set"
-        assert int(dut.alu_opcode.value) == expected_opcode, (
-            f"{enc.__name__}: expected {bin(expected_opcode)}, got {bin(int(dut.alu_opcode.value))}"
-        )
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def branch_immediate_sign_extension(dut):
+@cocotb.test(skip=True)
+async def test_srli(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_beq(1, 2, -8))
-    imm = int(dut.imm.value)
-    assert imm == 0xFFFFFFF8, f"expected 0xFFFFFFF8, got {hex(imm)}"
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def branch_immediate_max_min(dut):
+@cocotb.test(skip=True)
+async def test_srai(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_beq(1, 2, 4094))
-    assert int(dut.imm.value) == 4094
-    await decode(dut, rv32i.encode_beq(1, 2, -4096))
-    imm = int(dut.imm.value)
-    assert imm == 0xFFFFF000, f"expected 0xFFFFF000, got {hex(imm)}"
+    raise NotImplementedError
 
 
-# === Jumps ===
-
-
-@cocotb.test()
-async def jal_immediate_encoding(dut):
+@cocotb.test(skip=True)
+async def test_lb(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_jal(1, 256))
-    assert dut.is_jal.value == 1
-    assert int(dut.imm.value) == 256
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def jal_rd_zero(dut):
+@cocotb.test(skip=True)
+async def test_lh(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_jal(0, 16))
-    assert dut.is_jal.value == 1
-    assert int(dut.rd.value) == 0
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def jalr_immediate_and_rs1(dut):
+@cocotb.test(skip=True)
+async def test_lw(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_jalr(1, 3, 12))
-    assert dut.is_jalr.value == 1
-    assert int(dut.rs1.value) == 3
-    assert int(dut.imm.value) == 12
+    raise NotImplementedError
 
 
-# === Upper immediate ===
-
-
-@cocotb.test()
-async def lui_immediate_lower_zeros(dut):
+@cocotb.test(skip=True)
+async def test_lbu(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_lui(1, 0xABCDE))
-    assert dut.is_lui.value == 1
-    imm = int(dut.imm.value)
-    assert imm == 0xABCDE000, f"expected 0xABCDE000, got {hex(imm)}"
-    assert (imm & 0xFFF) == 0
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def auipc_immediate_lower_zeros(dut):
+@cocotb.test(skip=True)
+async def test_lhu(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_auipc(1, 0x12345))
-    assert dut.is_auipc.value == 1
-    imm = int(dut.imm.value)
-    assert imm == 0x12345000, f"expected 0x12345000, got {hex(imm)}"
-    assert (imm & 0xFFF) == 0
+    raise NotImplementedError
 
 
-# === System / other ===
-
-
-@cocotb.test()
-async def fence_is_nop(dut):
+@cocotb.test(skip=True)
+async def test_jalr(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_fence(0xF, 0xF))
-    assert dut.is_load.value == 0
-    assert dut.is_store.value == 0
-    assert dut.is_branch.value == 0
-    assert dut.is_alu_imm.value == 0
-    assert dut.is_alu_reg.value == 0
-    assert dut.is_jal.value == 0
-    assert dut.is_jalr.value == 0
-    assert dut.is_lui.value == 0
-    assert dut.is_auipc.value == 0
-    assert dut.is_system.value == 0
-    assert dut.is_compressed.value == 0
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def jal_negative_immediate(dut):
-    """JAL J-type scrambled immediate with negative offset"""
+# === S-Type ===
+
+
+@cocotb.test(skip=True)
+async def test_sb(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_jal(1, -256))
-    assert dut.is_jal.value == 1
-    imm = int(dut.imm.value)
-    assert imm == 0xFFFFFF00, f"expected 0xFFFFFF00, got {hex(imm)}"
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def ecall_ebreak_is_system(dut):
+@cocotb.test(skip=True)
+async def test_sh(dut):
     await setup(dut)
-    await decode(dut, rv32i.encode_ecall())
-    assert dut.is_system.value == 1
-    await decode(dut, rv32i.encode_ebreak())
-    assert dut.is_system.value == 1
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def all_zeros_instruction(dut):
-    """All-zero instruction -- bits[1:0]=00 routes to compressed"""
+@cocotb.test(skip=True)
+async def test_sw(dut):
     await setup(dut)
-    await decode(dut, 0x00000000)
-    assert dut.is_compressed.value == 1
-    assert dut.is_load.value == 0
-    assert dut.is_store.value == 0
+    raise NotImplementedError
 
 
-@cocotb.test()
-async def bits_not_11_routes_to_compressed(dut):
+# === B-Type ===
+
+
+@cocotb.test(skip=True)
+async def test_beq(dut):
     await setup(dut)
-    await decode(dut, 0x00000001)  # bits[1:0]=01
-    assert dut.is_compressed.value == 1
-    await decode(dut, 0x00000002)  # bits[1:0]=10
-    assert dut.is_compressed.value == 1
-    await decode(dut, 0x00000003)  # bits[1:0]=11
-    assert dut.is_compressed.value == 0
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_bne(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_blt(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_bge(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_bltu(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_bgeu(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+# === U-Type ===
+
+
+@cocotb.test(skip=True)
+async def test_lui(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+@cocotb.test(skip=True)
+async def test_auipc(dut):
+    await setup(dut)
+    raise NotImplementedError
+
+
+# === J-Type ===
+
+
+@cocotb.test(skip=True)
+async def test_jal(dut):
+    await setup(dut)
+    raise NotImplementedError

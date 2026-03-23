@@ -7,7 +7,6 @@ module tb_alu (
     input  [3:0]  opcode,
     input  [31:0] a_in,
     input  [31:0] b_in,
-    input         c_in,
     output [31:0] result
 );
     `ifdef COCOTB_SIM
@@ -22,7 +21,6 @@ module tb_alu (
         .opcode (opcode),
         .a_in   (a_in),
         .b_in   (b_in),
-        .c_in   (c_in),
         .result (result)
     );
 endmodule

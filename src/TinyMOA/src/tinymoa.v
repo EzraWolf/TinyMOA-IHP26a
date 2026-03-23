@@ -1,14 +1,4 @@
-// TinyMOA Top-Level -- TinyTapeout IHP26a wrapper
-//
-// GDS Milestone 1: TCM macro standalone.
-// Verifies the IHP RM_IHPSG13_2P_512x32 dual-port SRAM macro
-// integrates cleanly into the OpenLane/TinyTapeout GDS flow.
-//
-// Port A: CPU (placeholder - tied off for M1)
-// Port B: DCIM (placeholder - tied off for M1)
-// uo_out driven from a_dout to prevent macro from being optimized away.
-//
-// Next milestone: add CPU + decoder + registers (Milestone 2).
+// TinyMOA RISC-V & DCIM ASIC
 
 `default_nettype none
 `timescale 1ns / 1ps
@@ -23,18 +13,43 @@ module tinymoa_top (
     output [7:0] uio_oe
 );
 
+    // CPU memory interface
+    wire [23:0] cpu_mem_addr;
+    wire        cpu_mem_read;
+    wire        cpu_mem_write;
+    wire [1:0]  cpu_mem_size;
+    wire [31:0] cpu_mem_wdata;
+    wire [31:0] cpu_mem_rdata;
+    wire        cpu_mem_ready = 1'b1; // Synced, always ready
+
+    tinymoa_cpu cpu (
+        .clk       (clk),
+        .nrst      (nrst),
+        .mem_ready (cpu_mem_ready),
+        .mem_addr  (cpu_mem_addr),
+        .mem_read  (cpu_mem_read),
+        .mem_write (cpu_mem_write),
+        .mem_size  (cpu_mem_size),
+        .mem_wdata (cpu_mem_wdata),
+        .mem_rdata (cpu_mem_rdata)
+    );
+
+    // TCM data wires
     wire [31:0] tcm_a_dout;
     wire [31:0] tcm_b_dout;
 
+    assign cpu_mem_rdata = tcm_a_dout;
+
+
+    // CPU/bootloader FSM -> TCM Port A
+    // TCM is word-addressed (512 words = 2KB). Byte addr[11:2] = word addr[9:0].
     tinymoa_tcm tcm (
         .clk    (clk),
-        // Port A: CPU (inactive for M1)
-        .a_en   (1'b0),
-        .a_wen  (1'b0),
-        .a_din  (32'b0),
+        .a_en   (cpu_mem_read | cpu_mem_write),
+        .a_wen  (cpu_mem_write),
+        .a_din  (cpu_mem_wdata),
         .a_dout (tcm_a_dout),
-        .a_addr (10'b0),
-        // Port B: DCIM (inactive for M1)
+        .a_addr (cpu_mem_addr[11:2]),
         .b_en   (1'b0),
         .b_wen  (1'b0),
         .b_din  (32'b0),
@@ -42,11 +57,10 @@ module tinymoa_top (
         .b_addr (10'b0)
     );
 
-    // Drive uo_out from a_dout to prevent macro optimization
     assign uo_out  = tcm_a_dout[7:0];
     assign uio_out = 8'b0;
     assign uio_oe  = 8'b0;
 
-    wire _unused = &{nrst, ui_in, uio_in, tcm_a_dout[31:8], tcm_b_dout, 1'b0};
+    wire _unused = &{ui_in, uio_in, tcm_b_dout, cpu_mem_size, 1'b0};
 
 endmodule

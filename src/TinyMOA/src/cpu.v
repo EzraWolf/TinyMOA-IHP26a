@@ -1,214 +1,242 @@
-// TinyMOA CPU Core -- RV32EC nibble-serial pipelined processor
+// TinyMOA CPU Core
+// Single-cycle 32-bit FSM: FETCH -> DECODE -> EXECUTE -> MEM -> WB
 //
-// FSM: FETCH -> DECODE -> EXECUTE -> WRITEBACK -> MEM (load/store only)
-//
-// FETCH:     1 cycle TCM (synchronous read, ready asserted next cycle), stall for QSPI.
-// DECODE:    1 cycle, combinational.
-// EXECUTE:   8 cycles (RV32I) or 4 (some RV32C). Each cycle: regfile outputs nibble,
-//            ALU processes with carry chain, result nibble written back. Pipelined.
-//            Shifts and C.MUL use separate datapaths inside alu.v.
-// WRITEBACK: 1 cycle. Update PC.
-// MEM:       Load/store only. Assert mem_read/write, wait for mem_ready.
+// Memory interface is unified (one port for fetch + data).
+// TCM is synchronous: address presented in FETCH, data valid in DECODE.
+// instr_reg is stable from DECODE through WB, so decoder/regfile outputs
+// are combinationally valid throughout -- no need to re-latch them.
 
 `default_nettype none
 `timescale 1ns / 1ps
 
 module tinymoa_cpu (
-    input clk,
-    input nrst,
+    input  clk,
+    input  nrst,
 
-    input             mem_ready,
-    output reg [1:0]  mem_size,
-
-    output reg        mem_read,
-    input      [31:0] mem_rdata,
-
-    output reg        mem_write,
-    output reg [31:0] mem_wdata,
-
-    output reg [23:0] mem_addr
+    // Unified memory interface (TCM Port A)
+    input         mem_ready,
+    output [23:0] mem_addr,
+    output        mem_read,
+    output        mem_write,
+    output [1:0]  mem_size,    // [1:0]=size: 00=byte, 01=half, 10=word
+    output [31:0] mem_wdata,
+    input  [31:0] mem_rdata
 );
 
-    localparam S_FETCH     = 3'd0;
-    localparam S_DECODE    = 3'd1;
-    localparam S_EXECUTE   = 3'd2;
-    localparam S_WRITEBACK = 3'd3;
-    localparam S_MEM       = 3'd4;
-
     reg [2:0]  state;
-    reg [31:0] instr;
-    reg        alu_carry;
-    reg        alu_cmp;
-    reg        mem_is_load;
+    reg [23:0] pc;
+    reg [31:0] instr_reg;       // latched from mem_rdata in DECODE
+    reg [31:0] alu_result_reg;  // latched from alu_result in EXECUTE
+    reg [31:0] load_data_reg;   // latched from mem_rdata in MEM (loads only)
 
-    // Program counter
-    wire [23:0] pc;
-    reg         pc_en;
-    reg         pc_wen;
-
-    // Nibble counter
-    wire [2:0] nibble_ct;
-    reg        nibble_en;
-    reg        nibble_wen;
-
-    // Decoder outputs
-    wire [31:0] dec_imm;
-    wire [3:0]  dec_alu_opcode;
-    wire [2:0]  dec_mem_opcode;
-    wire [3:0]  dec_rs1, dec_rs2, dec_rd;
-    wire        dec_is_load, dec_is_store;
-    wire        dec_is_branch, dec_is_jal, dec_is_jalr;
-    wire        dec_is_lui, dec_is_auipc;
-    wire        dec_is_alu_reg, dec_is_alu_imm;
-    wire        dec_is_system;
-    wire        dec_is_compressed;
-
-    // Register file
-    wire [3:0]  rf_rs1_nibble;
-    wire [3:0]  rf_rs2_nibble;
-    reg  [3:0]  rf_rd_nibble;
-    reg         rf_wen;
-
-    // ALU
-    wire [3:0]  alu_result;
-    wire        alu_c_out;
-    wire        alu_cmp_out;
-    reg  [3:0]  alu_b_nibble; // B operand mux: rs2 nibble or imm nibble
-
-    // === Submodule instances ===
-
-    tinymoa_counter #(.DATA_WIDTH(24)) program_counter (
-        .clk     (clk),
-        .nrst    (nrst),
-        .en      (pc_en),
-        .wen     (pc_wen),
-        .data_in (pc),
-        .result  (pc)
-    );
-
-    tinymoa_counter #(.DATA_WIDTH(3)) nibble_counter (
-        .clk     (clk),
-        .nrst    (nrst),
-        .en      (nibble_en),
-        .wen     (nibble_wen),
-        .data_in (3'd0),
-        .result  (nibble_ct)
-    );
+    // === Decoder ===
+    wire [31:0] decoder_imm;
+    wire [3:0]  decoder_alu_opcode;
+    wire [2:0]  decoder_mem_opcode;
+    wire [3:0]  decoder_rs1;
+    wire [3:0]  decoder_rs2;
+    wire [3:0]  decoder_rd;
+    wire        decoder_is_load;
+    wire        decoder_is_store;
+    wire        decoder_is_branch;
+    wire        decoder_is_jal;
+    wire        decoder_is_jalr;
+    wire        decoder_is_lui;
+    wire        decoder_is_auipc;
+    wire        decoder_is_alu_reg;
+    wire        decoder_is_alu_imm;
+    wire        decoder_is_system;
+    wire        decoder_is_compressed;
 
     tinymoa_decoder decoder (
-        .instr         (instr),
-        .imm           (dec_imm),
-        .alu_opcode    (dec_alu_opcode),
-        .mem_opcode    (dec_mem_opcode),
-        .rs1           (dec_rs1),
-        .rs2           (dec_rs2),
-        .rd            (dec_rd),
-        .is_load       (dec_is_load),
-        .is_store      (dec_is_store),
-        .is_branch     (dec_is_branch),
-        .is_jal        (dec_is_jal),
-        .is_jalr       (dec_is_jalr),
-        .is_lui        (dec_is_lui),
-        .is_auipc      (dec_is_auipc),
-        .is_alu_reg    (dec_is_alu_reg),
-        .is_alu_imm    (dec_is_alu_imm),
-        .is_system     (dec_is_system),
-        .is_compressed (dec_is_compressed)
+        .instr         (instr_reg),
+        .imm           (decoder_imm),
+        .alu_opcode    (decoder_alu_opcode),
+        .mem_opcode    (decoder_mem_opcode),
+        .rs1           (decoder_rs1),
+        .rs2           (decoder_rs2),
+        .rd            (decoder_rd),
+        .is_load       (decoder_is_load),
+        .is_store      (decoder_is_store),
+        .is_branch     (decoder_is_branch),
+        .is_jal        (decoder_is_jal),
+        .is_jalr       (decoder_is_jalr),
+        .is_lui        (decoder_is_lui),
+        .is_auipc      (decoder_is_auipc),
+        .is_alu_reg    (decoder_is_alu_reg),
+        .is_alu_imm    (decoder_is_alu_imm),
+        .is_system     (decoder_is_system),
+        .is_compressed (decoder_is_compressed)
     );
 
-    tinymoa_registers register_file (
-        .clk        (clk),
-        .nrst       (nrst),
-        .nibble_ct  (nibble_ct),
-        .rs1_sel    (dec_rs1),
-        .rs1_nibble (rf_rs1_nibble),
-        .rs2_sel    (dec_rs2),
-        .rs2_nibble (rf_rs2_nibble),
-        .rd_wen     (rf_wen),
-        .rd_sel     (dec_rd),
-        .rd_nibble  (rf_rd_nibble)
+
+    // === Register file ===
+    wire [31:0] regfile_rs1_data;
+    wire [31:0] regfile_rs2_data;
+
+    reg        regfile_rd_wen;
+    reg [31:0] regfile_rd_data;
+
+    tinymoa_registers registers (
+        .clk      (clk),
+        .nrst     (nrst),
+        .rs1_sel  (decoder_rs1),
+        .rs1_data (regfile_rs1_data),
+        .rs2_sel  (decoder_rs2),
+        .rs2_data (regfile_rs2_data),
+        .rd_wen   (regfile_rd_wen),
+        .rd_sel   (decoder_rd),
+        .rd_data  (regfile_rd_data)
     );
+
+
+    // === ALU ===
+    reg  [31:0] alu_a_in;
+    reg  [31:0] alu_b_in;
+    wire [31:0] alu_result;
+
+    // Input mux
+    always @(*) begin
+        alu_a_in = regfile_rs1_data;
+        alu_b_in = decoder_imm;
+        if (decoder_is_alu_reg) alu_b_in = regfile_rs2_data;
+        if (decoder_is_branch)  alu_b_in = regfile_rs2_data;
+        if (decoder_is_auipc)   alu_a_in = {8'b0, pc};
+    end
 
     tinymoa_alu alu (
-        .opcode  (dec_alu_opcode),
-        .a_in    (rf_rs1_nibble),
-        .b_in    (alu_b_nibble),
-        .c_in    (alu_carry),
-        .result  (alu_result),
-        .c_out   (alu_c_out),
-        .cmp_in  (alu_cmp),
-        .cmp_out (alu_cmp_out)
+        .opcode (decoder_alu_opcode),
+        .a_in   (alu_a_in),
+        .b_in   (alu_b_in),
+        .result (alu_result)
     );
 
-    // === Core FSM ===
+
+    // === Derived combinational signals ===
+    wire [23:0] instr_len = decoder_is_compressed ? 24'd2 : 24'd4; // RV32I = 4, RV32C = 2
+    wire [23:0] link_addr = pc + instr_len; // JAL/JALR return address: PC + instr_len
+
+    // mem_opcode[1:0]=size (00=byte, 01=half, 10=word), [2]=unsigned
+    reg [31:0] load_ext;
+    always @(*) begin
+        case (decoder_mem_opcode)
+            3'b000:  load_ext = {{24{load_data_reg[7]}},  load_data_reg[7:0]};  // LB
+            3'b100:  load_ext = {24'b0,                   load_data_reg[7:0]};  // LBU
+            3'b001:  load_ext = {{16{load_data_reg[15]}}, load_data_reg[15:0]}; // LH
+            3'b101:  load_ext = {16'b0,                   load_data_reg[15:0]}; // LHU
+            default: load_ext = load_data_reg;                                  // LW
+        endcase
+    end
+
+
+    // === Memory interface ===
+    reg [23:0] mem_addr_r;
+    reg        mem_read_r;
+    reg        mem_write_r;
+
+    assign mem_addr  = mem_addr_r;
+    assign mem_read  = mem_read_r;
+    assign mem_write = mem_write_r;
+    assign mem_wdata = regfile_rs2_data; // store data
+    assign mem_size  = decoder_mem_opcode[1:0];
+
+
+    // === FSM ===
+    localparam FSM_FETCH   = 3'd0;
+    localparam FSM_DECODE  = 3'd1;
+    localparam FSM_EXECUTE = 3'd2;
+    localparam FSM_MEM     = 3'd3;
+    localparam FSM_WB      = 3'd4;
 
     always @(posedge clk or negedge nrst) begin
         if (!nrst) begin
-            state      <= S_FETCH;
-            instr      <= 32'd0;
-            mem_read   <= 1'b0;
-            mem_write  <= 1'b0;
-            rf_wen     <= 1'b0;
-            pc_en      <= 1'b0;
-            pc_wen     <= 1'b0;
-            nibble_en  <= 1'b0;
-            nibble_wen <= 1'b0;
-            alu_carry  <= 1'b0;
-            alu_cmp    <= 1'b1;
+            state          <= FSM_FETCH;
+            pc             <= 24'd0;
+            instr_reg      <= 32'b0;
+            alu_result_reg <= 32'b0;
+            load_data_reg  <= 32'b0;
+            mem_addr_r     <= 24'd0;
+            mem_read_r     <= 1'b0;
+            mem_write_r    <= 1'b0;
+            regfile_rd_wen  <= 1'b0;
+            regfile_rd_data <= 32'b0;
         end else begin
-            rf_wen     <= 1'b0;
-            pc_en      <= 1'b0;
-            pc_wen     <= 1'b0;
-            nibble_en  <= 1'b0;
-            nibble_wen <= 1'b0;
-            mem_read   <= 1'b0;
-            mem_write  <= 1'b0;
+            regfile_rd_wen <= 1'b0; // default: no write
 
             case (state)
-                S_FETCH: begin
-                    // Assert read at PC. Transition to DECODE when mem_ready.
-                    // mem_addr = pc (byte address).
-                    // For QSPI: stall here until mem_ready. For TCM: 1-cycle wait.
+
+                FSM_FETCH: begin
+                    // Present PC to TCM. Synchronous SRAM: data valid next cycle.
+                    mem_addr_r  <= pc;
+                    mem_read_r  <= 1'b1;
+                    mem_write_r <= 1'b0;
+                    state       <= FSM_DECODE;
                 end
 
-                S_DECODE: begin
-                    // Latch instruction, clear carry, reset cmp accumulator.
-                    // Set alu_b_nibble mux: rs2 for alu_reg, imm for alu_imm/load/store/jal/branch.
-                    // Go to EXECUTE.
+                FSM_DECODE: begin
+                    // mem_rdata now valid. Latch instruction; decoder sees it next cycle.
+                    mem_read_r <= 1'b0;
+                    instr_reg  <= mem_rdata;
+                    state      <= FSM_EXECUTE;
                 end
 
-                S_EXECUTE: begin
-                    // Enable nibble counter. Each cycle:
-                    //   alu_b_nibble = imm nibble (dec_imm >> (nibble_ct*4)) or rf_rs2_nibble
-                    //   rf_rd_nibble = alu_result; rf_wen = 1 (if writing rd)
-                    //   alu_carry <= alu_c_out; alu_cmp <= alu_cmp_out
-                    // On nibble_done: go to MEM (load/store) or WRITEBACK.
-                    // For SLL/SRL/SRA/C.MUL: separate datapath, different timing.
+                FSM_EXECUTE: begin
+                    // Decoder and regfile outputs are combinationally valid from instr_reg.
+                    // Latch ALU result for use in MEM and WB.
+                    alu_result_reg <= alu_result;
+
+                    if (decoder_is_load || decoder_is_store) begin
+                        state <= FSM_MEM;
+                    end else begin
+                        state <= FSM_WB;
+                    end
                 end
 
-                S_WRITEBACK: begin
-                    // Update PC:
-                    //   Normal: pc + (dec_is_compressed ? 2 : 4)
-                    //   Branch taken: pc + dec_imm[23:0]
-                    //   JAL: pc + dec_imm[23:0]
-                    //   JALR: (rf_rs1_full + dec_imm) & ~1
-                    // Go to S_FETCH.
+                FSM_MEM: begin
+                    // Drive effective address (rs1 + imm, computed by ALU in EXECUTE).
+                    mem_addr_r  <= alu_result_reg[23:0];
+                    mem_read_r  <= decoder_is_load;
+                    mem_write_r <= decoder_is_store;
+                    if (mem_ready) begin
+                        mem_read_r    <= 1'b0;
+                        mem_write_r   <= 1'b0;
+                        load_data_reg <= mem_rdata;
+                        state         <= FSM_WB;
+                    end
                 end
 
-                S_MEM: begin
-                    // Load: mem_addr = computed EA, mem_read = 1, wait mem_ready,
-                    //   then route mem_rdata through register_file (byte/half/word with sign extend).
-                    // Store: mem_addr = EA, mem_write = 1, mem_wdata = rs2, wait mem_ready.
-                    // Go to S_WRITEBACK.
+                FSM_WB: begin
+                    // Select writeback value
+                    if (decoder_is_lui) begin
+                        regfile_rd_data <= decoder_imm;
+                    end else if (decoder_is_jal || decoder_is_jalr) begin
+                        regfile_rd_data <= {8'b0, link_addr};
+                    end else if (decoder_is_load) begin
+                        regfile_rd_data <= load_ext;
+                    end else begin
+                        regfile_rd_data <= alu_result_reg;
+                    end
+                    regfile_rd_wen <= (decoder_rd != 4'd0);
+
+                    // Update PC
+                    if (decoder_is_jal) begin
+                        pc <= pc + decoder_imm[23:0];
+                    end else if (decoder_is_jalr) begin
+                        pc <= alu_result_reg[23:0] & 24'hFFFFFE;
+                    end else begin
+                        // Branch: not-taken stub (B-type imm not yet assembled in decoder)
+                        pc <= pc + instr_len;
+                    end
+
+                    state <= FSM_FETCH;
                 end
+
+                default: state <= FSM_FETCH;
             endcase
         end
     end
 
-    // alu_b_nibble mux (combinational, fully driven in FSM above, default here)
-    // In EXECUTE: alu_b_nibble = dec_is_alu_reg ? rf_rs2_nibble : dec_imm[nibble_ct*4+:4]
-    always @(*) begin
-        alu_b_nibble = rf_rs2_nibble;
-    end
+    wire _unused = &{decoder_is_system, decoder_is_alu_imm, decoder_is_branch,
+                     decoder_is_auipc, 1'b0};
 
 endmodule
