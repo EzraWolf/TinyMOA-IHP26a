@@ -1,303 +1,527 @@
 """
 TinyMOA system integration tests.
 
-Tests PAR IO, debug stream, and CPU-DCIM communication through tinymoa_top.
+Pin mapping:
+  ui_in[0]    target      0=TCM, 1=DCIM MMIO
+  ui_in[1]    rw          0=read, 1=write
+  ui_in[2]    addr_load
+  ui_in[3]    halt        gates clock for DCIM and ext_io FSM. debug pins remain readable.
+  ui_in[4]    strobe
+  ui_in[5]    execute
+  ui_in[6]    dbg_strobe
+  ui_in[7]    spare
+
+  uo_out[0]   spare
+  uo_out[1]   ready
+  uo_out[2]   word_done
+  uo_out[5:3] dbg_state
+  uo_out[6]   dcim_busy
+  uo_out[7]   dcim_done
+
+  uio[7:0]   bidir data bus
 """
 
+import numpy as np
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge
-import utility.rv32i_encode as rv32i
+from cocotb.triggers import ClockCycles
+
+
+# ui_in bit masks
+TARGET = 1 << 0
+RW = 1 << 1
+ADDR_LOAD = 1 << 2
+HALT = 1 << 3
+STROBE = 1 << 4
+EXECUTE = 1 << 5
+DBG_STROBE = 1 << 6
 
 
 async def setup(dut):
-    """Reset and configure for PAR mode."""
     clock = Clock(dut.clk, 10, unit="ns")
     cocotb.start_soon(clock.start())
-
-    dut.is_parallel.value = 0
-    dut.par_space.value = 0
-    dut.par_cpu_nrst.value = 0
-    dut.par_we.value = 0
-    dut.par_oe.value = 0
-    dut.par_addr.value = 0
-    dut.dbg_en.value = 0
-    dut.par_data_in.value = 0
-
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
     dut.nrst.value = 0
     await ClockCycles(dut.clk, 1)
     dut.nrst.value = 1
 
 
-async def par_write_nibbles(dut, data):
-    """Write one 32-bit word via 8 nibble strobes (LSN first). Does NOT set mode/addr."""
-    for nibble_idx in range(8):
-        nibble = (data >> (nibble_idx * 4)) & 0xF
-        dut.par_data_in.value = nibble
-        dut.par_we.value = 1
+# === Low-level IO ===
+
+
+async def io_write_byte(
+    dut, byte_val, target=0, addr_load=0, extra_flags=0, timeout=100
+):
+    """Write a byte via uio. Sets rw=1 (unless addr_load), strobes, waits for ready."""
+    flags = STROBE | extra_flags
+    if addr_load:
+        flags |= ADDR_LOAD
+    else:
+        flags |= RW
+    if target:
+        flags |= TARGET
+
+    dut.uio_in.value = byte_val & 0xFF
+    dut.ui_in.value = flags
+    await ClockCycles(dut.clk, 1)
+    dut.ui_in.value = flags & ~STROBE
+    for _ in range(timeout):
         await ClockCycles(dut.clk, 1)
-        dut.par_we.value = 0
-        await ClockCycles(dut.clk, 1)
-    await ClockCycles(dut.clk, 1)
-
-
-async def par_load_words(dut, region, words):
-    """Load a list of 32-bit words into TCM via PAR auto-increment.
-    region: 0=code(0x000), 1=weights(0x1A0), 2=acts(0x1C0), 3=results(0x1E0)
-    """
-    dut.is_parallel.value = 1
-    dut.par_space.value = 0  # TCM
-    dut.par_addr.value = region
-    dut.par_cpu_nrst.value = 0  # hold CPU in reset
-    await ClockCycles(dut.clk, 2)  # let addr counter reset to base
-    for w in words:
-        await par_write_nibbles(dut, w)
-
-
-async def par_mmio_write(dut, reg_idx, data):
-    """Write 32-bit value to DCIM MMIO register via PAR.
-    reg_idx: 0=CTRL, 1=STATUS, 2=WEIGHT_BASE, 3=ACT_BASE
-    """
-    dut.is_parallel.value = 1
-    dut.par_space.value = 1  # MMIO
-    dut.par_addr.value = reg_idx & 0x3
-    await ClockCycles(dut.clk, 1)
-    await par_write_nibbles(dut, data)
-
-
-async def par_mmio_read(dut, reg_idx):
-    """Read 32-bit value from DCIM MMIO register via PAR.
-    1. Toggle par_addr to reset nibble counter.
-    2. Assert par_oe to trigger DCIM read and latch mmio_rdata.
-    3. Toggle addr again to reset nibble counter after the trigger.
-    4. Read 8 nibbles (await first so registered output settles).
-    """
-    dut.is_parallel.value = 1
-    dut.par_space.value = 1  # MMIO
-    dut.par_we.value = 0
-    dut.par_oe.value = 0
-
-    # Reset nibble counter by toggling par_addr
-    dut.par_addr.value = (reg_idx + 1) & 0x3
-    await ClockCycles(dut.clk, 1)
-    dut.par_addr.value = reg_idx & 0x3
-    await ClockCycles(dut.clk, 1)
-
-    # Trigger DCIM read (1 cycle par_oe latches mmio_rdata)
-    dut.par_oe.value = 1
-    await ClockCycles(dut.clk, 1)
-
-    # Reset nibble counter again (par_oe advanced it to 1)
-    dut.par_oe.value = 0
-    dut.par_addr.value = (reg_idx + 1) & 0x3
-    await ClockCycles(dut.clk, 1)
-    dut.par_addr.value = reg_idx & 0x3
-    await ClockCycles(dut.clk, 1)
-
-    # Read 8 nibbles. Await THEN read so registered output is valid.
-    dut.par_oe.value = 1
-    word = 0
-    for nibble_idx in range(8):
-        await ClockCycles(dut.clk, 1)
-        nibble = int(dut.par_data_out.value)
-        word |= (nibble & 0xF) << (nibble_idx * 4)
-
-    dut.par_oe.value = 0
-    await ClockCycles(dut.clk, 1)
-    return word
-
-
-@cocotb.test()
-async def test_par_rdy_pulses(dut):
-    """PAR mode: writing 8 nibbles produces a par_rdy pulse."""
-    await setup(dut)
-
-    dut.is_parallel.value = 1
-    dut.par_space.value = 0
-    dut.par_addr.value = 0
-    await ClockCycles(dut.clk, 1)
-
-    # Write 8 nibbles (0x0 through 0x7)
-    for i in range(8):
-        dut.par_data_in.value = i
-        dut.par_we.value = 1
-        await ClockCycles(dut.clk, 1)
-        dut.par_we.value = 0
-        await ClockCycles(dut.clk, 1)
-
-    # After 8 nibbles: par_rdy should have pulsed, address should be 1
-    await ClockCycles(dut.clk, 1)
-    addr = int(dut.par_addr_out.value)
-    assert addr == 1, f"word address should be 1 after first word commit, got {addr}"
-
-
-@cocotb.test()
-async def test_par_addr_increments(dut):
-    """PAR mode: word address increments after writing two full words."""
-    await setup(dut)
-
-    dut.is_parallel.value = 1
-    dut.par_space.value = 0
-    dut.par_addr.value = 0
-    await ClockCycles(dut.clk, 2)
-
-    # Write two full words (16 nibble strobes)
-    await par_write_nibbles(dut, 0xDEADBEEF)
-    await par_write_nibbles(dut, 0xCAFEBABE)
-
-    addr = int(dut.par_addr_out.value)
-    assert addr == 2, f"word address should be 2 after two words, got {addr}"
-
-
-@cocotb.test()
-async def test_dbg_strobe_sync_byte(dut):
-    """Debug mode: first 8 bits of frame should be 0xAA sync byte."""
-    await setup(dut)
-
-    # Let shift register pre-load after reset
-    await ClockCycles(dut.clk, 1)
-
-    # Enter debug mode
-    dut.dbg_en.value = 1
-    await ClockCycles(dut.clk, 1)
-
-    # Read first 8 bits (should be 0xAA = 10101010)
-    sync = 0
-    for i in range(8):
-        await RisingEdge(dut.clk)
-        bit = int(dut.dbg_strobe.value)
-        sync = (sync << 1) | bit
-
-    assert sync == 0xAA, f"sync byte should be 0xAA, got 0x{sync:02X}"
-
-
-@cocotb.test()
-async def test_dbg_frame_end_pulses(dut):
-    """Debug mode: dbg_frame_end pulses after 144 bits."""
-    await setup(dut)
-
-    dut.dbg_en.value = 1
-    await ClockCycles(dut.clk, 1)
-
-    # Wait for frame_end pulse (should come at bit 143)
-    for cycle in range(200):
-        await RisingEdge(dut.clk)
-        if int(dut.dbg_frame_end.value) == 1:
-            # Frame end should occur at cycle ~143
-            assert cycle >= 140, f"frame_end too early at cycle {cycle}"
-            assert cycle <= 145, f"frame_end too late at cycle {cycle}"
+        if (int(dut.uo_out.value) >> 1) & 1:
             return
-
-    assert False, "dbg_frame_end never pulsed within 200 cycles"
-
-
-@cocotb.test()
-async def test_cpu_reset_held_in_par_mode(dut):
-    """PAR mode with par_cpu_nrst=0 keeps CPU in reset."""
-    await setup(dut)
-
-    dut.is_parallel.value = 1
-    dut.par_cpu_nrst.value = 0
-    await ClockCycles(dut.clk, 5)
-
-    # CPU should be stuck in FETCH (state 0) since it's held in reset
-    state = int(dut.cpu_state.value)
-    assert state == 0, f"CPU should be in FETCH (reset), got state {state}"
+    raise TimeoutError("io_write_byte: ready never went high")
 
 
-@cocotb.test()
-async def test_output_pins_default_ser_mode(dut):
-    """SER mode defaults: NCS lines all high (deasserted), QSPI idle."""
-    await setup(dut)
+async def io_read_byte(dut, target=0, timeout=100):
+    """Read a byte via uio. rw=0, strobes, waits for ready, returns byte."""
+    flags = STROBE
+    if target:
+        flags |= TARGET
 
-    dut.is_parallel.value = 0
-    await ClockCycles(dut.clk, 2)
-
-    uo_val = int(dut.uo_out.value)
-    # uo[7:4] should be NCS lines, all high (deasserted) = 0xF0
-    # uo[3:2] = qspi_sck=0, qspi_oe=0
-    # uo[1:0] = dbg_frame_end=0, dbg_strobe=X (depends on shift reg)
-    ncs = (uo_val >> 4) & 0xF
-    assert ncs == 0xF, f"NCS lines should all be high in idle, got 0x{ncs:X}"
-
-    sck = (uo_val >> 3) & 1
-    assert sck == 0, f"QSPI SCK should be 0 in idle, got {sck}"
-
-
-@cocotb.test()
-async def test_par_dcim_mmio_write_read(dut):
-    """PAR writes DCIM WEIGHT_BASE register and reads it back."""
-    await setup(dut)
-
-    # Write 0x123 to WEIGHT_BASE (register 2)
-    await par_mmio_write(dut, 2, 0x123)
-
-    # Read it back
-    result = await par_mmio_read(dut, 2)
-    # WEIGHT_BASE is 10 bits, so mask
-    assert (result & 0x3FF) == 0x123, (
-        f"WEIGHT_BASE readback: expected 0x123, got 0x{result:08X}"
-    )
-
-
-@cocotb.test()
-async def test_par_load_tcm_and_cpu_executes(dut):
-    """PAR loads a program into TCM, CPU runs it and writes result to TCM."""
-    await setup(dut)
-
-    # Program: write 0x1A0 to DCIM WEIGHT_BASE via MMIO, read it back,
-    # store to TCM byte 0x80 (word 0x20). Then self-loop.
-    #
-    # Registers: x4=tp (DCIM base), x10=a0, x11=a1
-    program = [
-        rv32i.encode_lui(4, 0x400),  # x4 = 0x400000 (tp = DCIM MMIO base)
-        rv32i.encode_addi(10, 0, 0x1A0),  # x10 = 0x1A0
-        rv32i.encode_sw(4, 10, 0x08),  # SW x10, 0x08(x4) -> WEIGHT_BASE = 0x1A0
-        rv32i.encode_lw(11, 4, 0x08),  # LW x11, 0x08(x4) -> x11 = WEIGHT_BASE
-        rv32i.encode_sw(0, 11, 0x20),  # SW x11, 0x20(x0) -> TCM word 0x20
-        rv32i.encode_beq(0, 0, 0),  # BEQ x0, x0, 0 -> self-loop
-    ]
-
-    # Load program via PAR into code region (auto-increment from word 0)
-    await par_load_words(dut, 0, program)
-
-    # Verify program loaded into TCM
-    for i in range(len(program)):
-        try:
-            val = int(dut.dut.tcm.mem[i].value)
-            dut._log.info(f"TCM[{i}] = 0x{val:08X} (expected 0x{program[i]:08X})")
-        except ValueError:
-            dut._log.error(f"TCM[{i}] = X (not written!)")
-
-    # Release CPU
-    dut.par_we.value = 0
-    dut.par_cpu_nrst.value = 1
-
-    names = ["FETCH", "DECODE", "EXEC", "MEM", "WB"]
-    for cyc in range(60):
+    dut.ui_in.value = flags
+    await ClockCycles(dut.clk, 1)
+    dut.ui_in.value = flags & ~STROBE
+    for _ in range(timeout):
         await ClockCycles(dut.clk, 1)
-        try:
-            st = int(dut.cpu_state.value)
-            pc = int(dut.cpu_pc.value)
-            sn = names[st] if st < len(names) else f"?{st}"
-            ready = int(dut.dut.cpu_mem_ready.value)
-            rd = int(dut.dut.cpu_mem_read.value)
-            wr = int(dut.dut.cpu_mem_write.value)
-            addr = int(dut.dut.cpu_mem_addr.value)
-            dut._log.info(
-                f"cy{cyc:3d} {sn:<6s} pc={pc} addr=0x{addr:06X} rd={rd} wr={wr} rdy={ready}"
-            )
-        except Exception:
-            dut._log.info(f"cy{cyc:3d} X values")
+        if (int(dut.uo_out.value) >> 1) & 1:
+            return int(dut.uio_out.value) & 0xFF
+    raise TimeoutError("io_read_byte: ready never went high")
 
-    # Check TCM word 0x20 (byte 0x80) via behavioral memory
-    try:
-        result = int(dut.dut.tcm.mem[0x20].value)
-    except ValueError:
-        pc = int(dut.cpu_pc.value) if hasattr(dut, "cpu_pc") else "?"
-        state = int(dut.cpu_state.value) if hasattr(dut, "cpu_state") else "?"
-        assert False, f"TCM[0x20] is X. CPU pc={pc} state={state}"
 
-    assert result == 0x1A0, (
-        f"CPU->DCIM roundtrip: expected 0x1A0 at TCM[0x20], got 0x{result:08X}"
+def io_read_debug(dut):
+    """Read all uo_out debug pins. Returns dict of current state."""
+    uo = int(dut.uo_out.value)
+    return {
+        "ready": (uo >> 1) & 1,
+        "word_done": (uo >> 2) & 1,
+        "dbg_state": (uo >> 3) & 7,
+        "dcim_busy": (uo >> 6) & 1,
+        "dcim_done": (uo >> 7) & 1,
+    }
+
+
+async def io_execute(dut, flags=0, wait_pin="ready", timeout=100):
+    """Pulse execute, wait for a uo_out pin to go high."""
+    dut.ui_in.value = flags | EXECUTE
+    await ClockCycles(dut.clk, 1)
+    dut.ui_in.value = flags
+
+    pin_bit = {"ready": 1, "word_done": 2, "dcim_done": 7}[wait_pin]
+    for _ in range(timeout):
+        await ClockCycles(dut.clk, 1)
+        if (int(dut.uo_out.value) >> pin_bit) & 1:
+            return
+    raise TimeoutError(f"io_execute: {wait_pin} never went high after {timeout} cycles")
+
+
+def verify_io(
+    dut,
+    *,
+    # ui_in
+    target=0,
+    rw=0,
+    addr_load=0,
+    halt=0,
+    strobe=0,
+    execute=0,
+    dbg_strobe=0,
+    ui_spare7=0,
+    # uo_out
+    uo_spare0=0,
+    ready=0,
+    word_done=0,
+    dbg_state=0,
+    dcim_busy=0,
+    dcim_done=0,
+    # uio
+    uio_out=0x00,
+    uio_oe=0x00,
+    uio_in=0x00,
+):
+    """Assert ALL external pins match expected values."""
+    ui = int(dut.ui_in.value)
+    assert (ui >> 0) & 1 == target, (
+        f"ui[0] target: expected {target}, got {(ui >> 0) & 1}"
     )
+    assert (ui >> 1) & 1 == rw, f"ui[1] rw: expected {rw}, got {(ui >> 1) & 1}"
+    assert (ui >> 2) & 1 == addr_load, (
+        f"ui[2] addr_load: expected {addr_load}, got {(ui >> 2) & 1}"
+    )
+    assert (ui >> 3) & 1 == halt, f"ui[3] halt: expected {halt}, got {(ui >> 3) & 1}"
+    assert (ui >> 4) & 1 == strobe, (
+        f"ui[4] strobe: expected {strobe}, got {(ui >> 4) & 1}"
+    )
+    assert (ui >> 5) & 1 == execute, (
+        f"ui[5] execute: expected {execute}, got {(ui >> 5) & 1}"
+    )
+    assert (ui >> 6) & 1 == dbg_strobe, (
+        f"ui[6] dbg_strobe: expected {dbg_strobe}, got {(ui >> 6) & 1}"
+    )
+    assert (ui >> 7) & 1 == ui_spare7, (
+        f"ui[7] spare: expected {ui_spare7}, got {(ui >> 7) & 1}"
+    )
+
+    uo = int(dut.uo_out.value)
+    assert (uo >> 0) & 1 == uo_spare0, (
+        f"uo[0] spare: expected {uo_spare0}, got {(uo >> 0) & 1}"
+    )
+    assert (uo >> 1) & 1 == ready, f"uo[1] ready: expected {ready}, got {(uo >> 1) & 1}"
+    assert (uo >> 2) & 1 == word_done, (
+        f"uo[2] word_done: expected {word_done}, got {(uo >> 2) & 1}"
+    )
+    assert (uo >> 3) & 7 == dbg_state, (
+        f"uo[5:3] dbg_state: expected {dbg_state}, got {(uo >> 3) & 7}"
+    )
+    assert (uo >> 6) & 1 == dcim_busy, (
+        f"uo[6] dcim_busy: expected {dcim_busy}, got {(uo >> 6) & 1}"
+    )
+    assert (uo >> 7) & 1 == dcim_done, (
+        f"uo[7] dcim_done: expected {dcim_done}, got {(uo >> 7) & 1}"
+    )
+
+    assert int(dut.uio_out.value) & 0xFF == uio_out & 0xFF, (
+        f"uio_out: expected 0x{uio_out:02X}, got 0x{int(dut.uio_out.value) & 0xFF:02X}"
+    )
+    assert int(dut.uio_oe.value) & 0xFF == uio_oe & 0xFF, (
+        f"uio_oe: expected 0x{uio_oe:02X}, got 0x{int(dut.uio_oe.value) & 0xFF:02X}"
+    )
+    assert int(dut.uio_in.value) & 0xFF == uio_in & 0xFF, (
+        f"uio_in: expected 0x{uio_in:02X}, got 0x{int(dut.uio_in.value) & 0xFF:02X}"
+    )
+
+
+# === Tests ===
+
+
+@cocotb.test()
+async def test_reset_outputs(dut):
+    """After reset, all outputs idle."""
+    await setup(dut)
+    await ClockCycles(dut.clk, 1)
+    verify_io(dut)
+
+
+@cocotb.test()
+async def test_tcm_write_read(dut):
+    """Write 0xDEADBEEF to TCM[0x010], read it back."""
+    await setup(dut)
+
+    # Load address 0x010
+    await io_write_byte(dut, 0x10, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+
+    # Load data 0xDEADBEEF
+    await io_write_byte(dut, 0xEF)
+    await io_write_byte(dut, 0xBE)
+    await io_write_byte(dut, 0xAD)
+    await io_write_byte(dut, 0xDE)
+
+    # Execute TCM write
+    await io_execute(dut, RW)
+
+    # Reload address for read
+    await io_write_byte(dut, 0x10, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+
+    # Execute TCM read
+    await io_execute(dut)
+
+    # Read 4 bytes back
+    b0 = await io_read_byte(dut)
+    b1 = await io_read_byte(dut)
+    b2 = await io_read_byte(dut)
+    b3 = await io_read_byte(dut)
+    result = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+
+    assert result == 0xDEADBEEF, (
+        f"TCM read-back: expected 0xDEADBEEF, got 0x{result:08X}"
+    )
+
+
+@cocotb.test()
+async def test_tcm_auto_increment(dut):
+    """Write two words at 0x020/0x021, read both back."""
+    await setup(dut)
+
+    # Load starting address
+    await io_write_byte(dut, 0x20, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+
+    # First word: 0x11111111
+    for _ in range(4):
+        await io_write_byte(dut, 0x11)
+    await io_execute(dut, RW)
+
+    # Second word: 0x22222222 (addr should be 0x021)
+    for _ in range(4):
+        await io_write_byte(dut, 0x22)
+    await io_execute(dut, RW)
+
+    # Read back: reload to 0x020
+    await io_write_byte(dut, 0x20, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+
+    # Read first word
+    await io_execute(dut)
+    val0 = 0
+    for i in range(4):
+        val0 |= (await io_read_byte(dut)) << (i * 8)
+
+    # Read second word (addr auto-incremented)
+    await io_execute(dut)
+    val1 = 0
+    for i in range(4):
+        val1 |= (await io_read_byte(dut)) << (i * 8)
+
+    assert val0 == 0x11111111, f"TCM[0x020]: expected 0x11111111, got 0x{val0:08X}"
+    assert val1 == 0x22222222, f"TCM[0x021]: expected 0x22222222, got 0x{val1:08X}"
+
+
+@cocotb.test()
+async def test_dcim_mmio_write_read(dut):
+    """Write WEIGHT_BASE via MMIO, read it back."""
+    await setup(dut)
+
+    # Load MMIO address 0x08
+    await io_write_byte(dut, 0x08, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+
+    # Load data 0x1A0
+    await io_write_byte(dut, 0xA0, target=1)
+    await io_write_byte(dut, 0x01, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+
+    # Execute MMIO write
+    await io_execute(dut, TARGET | RW)
+
+    # Reload address
+    await io_write_byte(dut, 0x08, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+
+    # Execute MMIO read
+    await io_execute(dut, TARGET)
+
+    # Read 4 bytes
+    result = 0
+    for i in range(4):
+        result |= (await io_read_byte(dut, target=1)) << (i * 8)
+
+    assert (result & 0x3FF) == 0x1A0, (
+        f"WEIGHT_BASE readback: expected 0x1A0, got 0x{result:08X}"
+    )
+
+
+@cocotb.test()
+async def test_dcim_status_idle(dut):
+    """DCIM idle after reset."""
+    await setup(dut)
+    await ClockCycles(dut.clk, 1)
+    verify_io(dut, dcim_busy=0, dcim_done=0, dbg_state=0)
+
+
+@cocotb.test()
+async def test_halt_pauses_dcim(dut):
+    """Start DCIM, assert halt, verify state freezes, release, verify completion.
+
+    Halt gates the clock for both DCIM and the ext_io FSM.
+    While halted, no transactions are processed. Debug pins (uo_out)
+    are combinational and remain readable -- they reflect the frozen state.
+    """
+    await setup(dut)
+
+    # Write CTRL = 0x13 to start DCIM
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0x13, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_execute(dut, TARGET | RW)
+
+    # Let DCIM run a few cycles so it leaves IDLE
+    await ClockCycles(dut.clk, 3)
+
+    # Assert halt
+    dut.ui_in.value = HALT
+    await ClockCycles(dut.clk, 1)
+
+    # Read frozen state
+    dbg_frozen = io_read_debug(dut)
+    assert dbg_frozen["dcim_busy"] == 1, "DCIM should be busy when halted mid-run"
+
+    # Wait -- state must not change
+    await ClockCycles(dut.clk, 20)
+    dbg_still = io_read_debug(dut)
+    assert dbg_frozen["dbg_state"] == dbg_still["dbg_state"], (
+        f"state changed while halted: {dbg_frozen['dbg_state']} -> {dbg_still['dbg_state']}"
+    )
+    assert dbg_still["dcim_done"] == 0, "DCIM should not finish while halted"
+
+    # Release halt -- DCIM should resume and eventually finish
+    dut.ui_in.value = 0
+    for _ in range(200):
+        await ClockCycles(dut.clk, 1)
+        dbg = io_read_debug(dut)
+        if dbg["dcim_done"]:
+            break
+    else:
+        raise TimeoutError("DCIM never reached DONE after halt released")
+
+
+@cocotb.test()
+async def test_dcim_inference(dut):
+    """Single 16x16 binary dot product via DCIM.
+
+    Program:
+      1. write TCM[0x180..0x18F] = 16 weight rows (all 0xFFFF)
+      2. write TCM[0x1A0]        = activation     (0xFFFF)
+      3. write MMIO WEIGHT_BASE  = 0x180
+      4. write MMIO ACT_BASE     = 0x1A0
+      5. write MMIO RESULT_BASE  = 0x1B0
+      6. write MMIO ARRAY_SIZE   = 16
+      7. write MMIO CTRL         = 0x13 (reload=1, prec=1, start=1)
+      8. poll  MMIO STATUS       until DONE
+      9. read  TCM[0x1B0..0x1BF] = 16 signed results
+
+    Math: XNOR(1,1)=1 for all 16 bits, popcount=16 per column.
+    Signed = 2*16 - 16*(2^1 - 1) = 32 - 16 = 16.
+    """
+    await setup(dut)
+
+    # 1. Load 16 weight words at 0x180
+    await io_write_byte(dut, 0x80, addr_load=1)
+    await io_write_byte(dut, 0x01, addr_load=1)
+    for _ in range(16):
+        await io_write_byte(dut, 0xFF)
+        await io_write_byte(dut, 0xFF)
+        await io_write_byte(dut, 0x00)
+        await io_write_byte(dut, 0x00)
+        await io_execute(dut, RW)
+
+    # 2. Load 1 activation word at 0x1A0
+    await io_write_byte(dut, 0xA0, addr_load=1)
+    await io_write_byte(dut, 0x01, addr_load=1)
+    await io_write_byte(dut, 0xFF)
+    await io_write_byte(dut, 0xFF)
+    await io_write_byte(dut, 0x00)
+    await io_write_byte(dut, 0x00)
+    await io_execute(dut, RW)
+
+    # 3. Configure DCIM
+    # WEIGHT_BASE = 0x180
+    await io_write_byte(dut, 0x08, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0x80, target=1)
+    await io_write_byte(dut, 0x01, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_execute(dut, TARGET | RW)
+
+    # ACT_BASE = 0x1A0
+    await io_write_byte(dut, 0x0C, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0xA0, target=1)
+    await io_write_byte(dut, 0x01, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_execute(dut, TARGET | RW)
+
+    # RESULT_BASE = 0x1B0
+    await io_write_byte(dut, 0x10, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0xB0, target=1)
+    await io_write_byte(dut, 0x01, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_execute(dut, TARGET | RW)
+
+    # ARRAY_SIZE = 16
+    await io_write_byte(dut, 0x14, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0x10, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_execute(dut, TARGET | RW)
+
+    # 4. CTRL = 0x13 (reload=1, prec=1, start=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0x13, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_execute(dut, TARGET | RW)
+
+    # 5. Poll STATUS until DONE
+    for _ in range(5000):
+        await io_write_byte(dut, 0x04, addr_load=1)
+        await io_write_byte(dut, 0x00, addr_load=1)
+        await io_execute(dut, TARGET)
+        b0 = await io_read_byte(dut, target=1)
+        if b0 & 0x2:
+            break
+        await ClockCycles(dut.clk, 1)
+    else:
+        raise TimeoutError("DCIM never reached DONE")
+
+    # === Compute expected result with numpy ===
+    # Weight matrix: 16x16 all ones (binary +1)
+    # Activation vector: 16 all ones (binary +1)
+    # XNOR dot product: popcount(XNOR(w_col, act)) per column
+    # Signed conversion: 2*popcount - N*(2^P - 1)
+    N = 16
+    P = 1
+    W = np.ones((N, N), dtype=np.int8)   # binary weights, all 1
+    a = np.ones(N, dtype=np.int8)         # binary activation, all 1
+    # XNOR: 1 when bits match
+    xnor = np.where(W == a, 1, 0)        # all 1 since both are 1
+    popcount = xnor.sum(axis=0)           # 16 per column
+    bias = N * ((1 << P) - 1)             # 16 * 1 = 16
+    expected = 2 * popcount - bias        # 2*16 - 16 = 16 per column
+    dut._log.info(f"numpy expected results: {expected.tolist()}")
+
+    # === Probe RTL internals to trace where data dies ===
+    # Check TCM memory directly: did DCIM write to result region?
+    tcm_mem = dut.dut.tcm.mem
+    for i in range(4):
+        raw = tcm_mem[0x1B0 + i].value
+        dut._log.info(f"TCM mem[0x{0x1B0+i:03X}] = {raw}")
+
+    # Check DCIM internals
+    dcim = dut.dut.dcim
+    dut._log.info(f"DCIM state={dcim.state.value} status={dcim.status_reg.value}")
+    dut._log.info(f"DCIM cfg: wb={dcim.cfg_weight_base.value} ab={dcim.cfg_act_base.value} rb={dcim.cfg_result_base.value} sz={dcim.cfg_array_size.value}")
+    dut._log.info(f"DCIM bias_reg={dcim.bias_reg.value}")
+    for i in range(4):
+        dut._log.info(f"DCIM shift_acc[{i}]={dcim.shift_acc[i].value} weight_reg[{i}]={dcim.weight_reg[i].value}")
+
+    # Check Port B signals
+    dut._log.info(f"Port B: b_en={dut.dut.tcm.b_en.value} b_wen={dut.dut.tcm.b_wen.value} b_addr={dut.dut.tcm.b_addr.value}")
+
+    # Check ext_io read path
+    dut._log.info(f"ext_io: read_reg={dut.dut.read_reg.value} uio_out_reg={dut.dut.uio_out_reg.value} uio_driving={dut.dut.uio_driving.value}")
+
+    # 6. Read 16 results from 0x1B0
+    results = []
+    for i in range(16):
+        await io_write_byte(dut, (0x1B0 + i) & 0xFF, addr_load=1)
+        await io_write_byte(dut, ((0x1B0 + i) >> 8) & 0xFF, addr_load=1)
+        await io_execute(dut)
+        val = 0
+        for j in range(4):
+            try:
+                val |= (await io_read_byte(dut)) << (j * 8)
+            except ValueError as e:
+                dut._log.error(f"result[{i}] byte {j}: {e}")
+                val = 0xDEAD
+                break
+        if val != 0xDEAD and val >= 0x80000000:
+            val -= 0x100000000
+        results.append(val)
+
+    dut._log.info(f"results: {results}")
+    for i, val in enumerate(results):
+        assert val == expected[i], f"result[{i}] = {val}, expected {expected[i]}"

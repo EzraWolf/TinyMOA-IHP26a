@@ -37,18 +37,22 @@ module tb_dcim (
     end
     assign tb_mem_rdata = mem[tb_mem_raddr];
 
-    // Write is synchronous, read is combinational
+    // Port B: registered read + synchronous write (matches real TCM)
     wire [31:0] dcim_mem_wdata;
     wire        dcim_mem_write;
     wire        dcim_mem_read;
     wire [9:0]  dcim_mem_addr;
+    reg  [31:0] mem_b_dout_r;
 
     always @(posedge clk) begin
-        if (dcim_mem_write)
-            mem[dcim_mem_addr] <= dcim_mem_wdata;
+        if (dcim_mem_read | dcim_mem_write) begin
+            if (dcim_mem_write)
+                mem[dcim_mem_addr] <= dcim_mem_wdata;
+            mem_b_dout_r <= mem[dcim_mem_addr];
+        end
     end
 
-    assign mem_b_dout = mem[dcim_mem_addr];
+    assign mem_b_dout = mem_b_dout_r;
 
     tinymoa_dcim dut (
         .clk        (clk),

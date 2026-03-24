@@ -31,11 +31,12 @@ ABASE_ADDR = 0x0C  # cfg_act_base    [9:0]
 RBASE_ADDR = 0x10  # cfg_result_base [9:0]
 SIZE_ADDR = 0x14  # cfg_array_size  [5:0]
 
-DEFAULT_WEIGHT_BASE = 0x1A0  # 416
-DEFAULT_ACT_BASE = 0x1C0  # 448
-DEFAULT_RESULT_BASE = 0x1E0  # 480
-DEFAULT_ARRAY_SIZE = 16
+DEFAULT_WEIGHT_BASE = 0x180
+DEFAULT_ACT_BASE = 0x1A0
+DEFAULT_RESULT_BASE = 0x1B0
 ARRAY_DIM = 16
+ACC_WIDTH = 9
+ALL_ONES = (1 << ARRAY_DIM) - 1
 
 
 async def setup(dut):
@@ -101,7 +102,7 @@ async def mem_preload(dut, memory_dict):
 async def mem_read_tb(dut, addr):
     """Read one word from testbench memory (combinational read port, needs simulator tick)."""
     dut.tb_mem_raddr.value = addr
-    await Timer(1, units="ns")  # allow combinational propagation
+    await Timer(1, units="ns")
     return int(dut.tb_mem_rdata.value)
 
 
@@ -130,9 +131,7 @@ async def wait_for_done(dut, max_cycles=400):
     assert False, f"DCIM never completed within {max_cycles} cycles"
 
 
-# ===========================================================
-# MMIO Register Tests
-# ===========================================================
+# === MMIO Register Tests ===
 
 
 @cocotb.test()
@@ -180,9 +179,7 @@ async def reset_clears_status(dut):
     assert status == 0, f"Status should be 0 after reset, got {status}"
 
 
-# ===========================================================
-# FSM Status Tests
-# ===========================================================
+# === FSM Status Tests ===
 
 
 @cocotb.test()
@@ -195,7 +192,7 @@ async def status_busy_after_start(dut):
     await mem_preload(dut, mem)
 
     await start_inference(dut, reload_weights=True, precision=1)
-    await ClockCycles(dut.clk, 3)  # give FSM time to reach LOAD_WEIGHTS
+    await ClockCycles(dut.clk, 3)
     status = await mmio_read(dut, STATUS_ADDR)
     assert (status & 0x1) == 1, f"Expected BUSY=1, got status={status}"
 
@@ -216,9 +213,7 @@ async def status_done_after_inference(dut):
     assert (status & 0x1) == 0, f"Expected BUSY cleared after DONE, got status={status}"
 
 
-# ===========================================================
-# Weight Loading Tests
-# ===========================================================
+# === Weight Loading Tests ===
 
 
 @cocotb.test()
@@ -268,47 +263,21 @@ async def skip_reload_finishes_faster(dut):
     )
 
 
-# ===========================================================
-# End-to-End Compute Tests
-# ===========================================================
+# === End-to-End Compute Tests ===
 
 
 @cocotb.test()
 async def end_to_end_all_ones_1bit(dut):
     """
-    All-ones weights, all-ones activation, 1-bit precision, array_size=16.
-    popcount = 16 per column. shift_acc = 16.
-    bias = 16 * (2^1 - 1) = 16.
-    signed = 2*16 - 16 = 16. All 16 results must equal 16.
+    All-ones weights, all-ones activation, 1-bit precision.
+    popcount = N per column. shift_acc = N.
+    bias = N * (2^1 - 1) = N.
+    signed = 2*N - N = N.
     """
+    expected = ARRAY_DIM
     await setup(dut)
-    mem = {DEFAULT_WEIGHT_BASE + i: 0xFFFF for i in range(ARRAY_DIM)}
-    mem[DEFAULT_ACT_BASE + 0] = 0xFFFF
-    mem.update({DEFAULT_RESULT_BASE + i: 0 for i in range(ARRAY_DIM)})
-    await mem_preload(dut, mem)
-
-    await start_inference(dut, reload_weights=True, precision=1)
-    await wait_for_done(dut)
-
-    await ClockCycles(dut.clk, 2)  # settle
-    for col in range(ARRAY_DIM):
-        addr = DEFAULT_RESULT_BASE + col
-        got = await mem_read_tb(dut, addr)
-        if got >= 0x80000000:
-            got -= 0x100000000
-        assert got == 16, f"col {col}: expected 16, got {got}"
-
-
-@cocotb.test()
-async def end_to_end_all_zeros_1bit(dut):
-    """
-    All-zeros weights, all-ones activation, 1-bit precision.
-    XNOR(0,1)=0, popcount=0, shift_acc=0.
-    bias = 16. signed = 2*0 - 16 = -16. All results must equal -16.
-    """
-    await setup(dut)
-    mem = {DEFAULT_WEIGHT_BASE + i: 0x00000000 for i in range(ARRAY_DIM)}
-    mem[DEFAULT_ACT_BASE + 0] = 0xFFFF
+    mem = {DEFAULT_WEIGHT_BASE + i: ALL_ONES for i in range(ARRAY_DIM)}
+    mem[DEFAULT_ACT_BASE + 0] = ALL_ONES
     mem.update({DEFAULT_RESULT_BASE + i: 0 for i in range(ARRAY_DIM)})
     await mem_preload(dut, mem)
 
@@ -321,21 +290,82 @@ async def end_to_end_all_zeros_1bit(dut):
         got = await mem_read_tb(dut, addr)
         if got >= 0x80000000:
             got -= 0x100000000
-        assert got == -16, f"col {col}: expected -16, got {got}"
+        assert got == expected, f"col {col}: expected {expected}, got {got}"
+
+
+@cocotb.test()
+async def end_to_end_half_ones_1bit(dut):
+    """
+    First 8 weight rows = all-ones, last 8 = all-zeros.
+    Activation = all-ones, 1-bit precision.
+
+    After transpose, weight_reg[col] has bits [7:0]=1, [15:8]=0.
+    XNOR with all-ones activation: popcount = 8.
+    bias = 16. signed = 2*8 - 16 = 0.
+    """
+    expected = 0
+    await setup(dut)
+
+    mem = {}
+    for i in range(ARRAY_DIM // 2):
+        mem[DEFAULT_WEIGHT_BASE + i] = ALL_ONES
+    for i in range(ARRAY_DIM // 2, ARRAY_DIM):
+        mem[DEFAULT_WEIGHT_BASE + i] = 0x00000000
+    mem[DEFAULT_ACT_BASE] = ALL_ONES
+    mem.update({DEFAULT_RESULT_BASE + i: 0xDEAD for i in range(ARRAY_DIM)})
+    await mem_preload(dut, mem)
+
+    await start_inference(dut, reload_weights=True, precision=1)
+    await wait_for_done(dut)
+
+    await ClockCycles(dut.clk, 2)
+    for col in range(ARRAY_DIM):
+        addr = DEFAULT_RESULT_BASE + col
+        got = await mem_read_tb(dut, addr)
+        if got >= 0x80000000:
+            got -= 0x100000000
+        assert got == expected, f"col {col}: expected {expected}, got {got}"
+
+
+@cocotb.test()
+async def end_to_end_all_zeros_1bit(dut):
+    """
+    All-zeros weights, all-ones activation, 1-bit precision.
+    XNOR(0,1)=0, popcount=0, shift_acc=0.
+    bias = N. signed = 2*0 - N = -N.
+    """
+    expected = -ARRAY_DIM
+    await setup(dut)
+    mem = {DEFAULT_WEIGHT_BASE + i: 0x00000000 for i in range(ARRAY_DIM)}
+    mem[DEFAULT_ACT_BASE + 0] = ALL_ONES
+    mem.update({DEFAULT_RESULT_BASE + i: 0 for i in range(ARRAY_DIM)})
+    await mem_preload(dut, mem)
+
+    await start_inference(dut, reload_weights=True, precision=1)
+    await wait_for_done(dut)
+
+    await ClockCycles(dut.clk, 2)
+    for col in range(ARRAY_DIM):
+        addr = DEFAULT_RESULT_BASE + col
+        got = await mem_read_tb(dut, addr)
+        if got >= 0x80000000:
+            got -= 0x100000000
+        assert got == expected, f"col {col}: expected {expected}, got {got}"
 
 
 @cocotb.test()
 async def end_to_end_all_ones_2bit(dut):
     """
     All-ones weights, all-ones activation (both bit-planes), 2-bit precision.
-    bit_plane=1: shift_acc = 0*2 + 16 = 16
-    bit_plane=0: shift_acc = 16*2 + 16 = 48
-    bias = 16 * (2^2 - 1) = 48. signed = 2*48 - 48 = 48.
+    bit_plane=1: shift_acc = 0*2 + N = N
+    bit_plane=0: shift_acc = N*2 + N = 3N
+    bias = N * (2^2 - 1) = 3N. signed = 2*3N - 3N = 3N.
     """
+    expected = 3 * ARRAY_DIM
     await setup(dut)
-    mem = {DEFAULT_WEIGHT_BASE + i: 0xFFFF for i in range(ARRAY_DIM)}
-    mem[DEFAULT_ACT_BASE + 0] = 0xFFFF  # LSB bit-plane
-    mem[DEFAULT_ACT_BASE + 1] = 0xFFFF  # MSB bit-plane
+    mem = {DEFAULT_WEIGHT_BASE + i: ALL_ONES for i in range(ARRAY_DIM)}
+    mem[DEFAULT_ACT_BASE + 0] = ALL_ONES
+    mem[DEFAULT_ACT_BASE + 1] = ALL_ONES
     mem.update({DEFAULT_RESULT_BASE + i: 0 for i in range(ARRAY_DIM)})
     await mem_preload(dut, mem)
 
@@ -348,4 +378,4 @@ async def end_to_end_all_ones_2bit(dut):
         got = await mem_read_tb(dut, addr)
         if got >= 0x80000000:
             got -= 0x100000000
-        assert got == 48, f"col {col}: expected 48, got {got}"
+        assert got == expected, f"col {col}: expected {expected}, got {got}"

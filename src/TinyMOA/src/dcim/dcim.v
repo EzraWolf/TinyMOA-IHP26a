@@ -45,7 +45,7 @@
 
 module tinymoa_dcim #(
     parameter ARRAY_DIM = 16, // NxN array
-    parameter ACC_WIDTH = 8   // max value = N*(2^P-1) = 16*15 = 240
+    parameter ACC_WIDTH = 9   // max value = N*(2^P-1)
 )(
     input clk,
     input nrst,
@@ -68,14 +68,14 @@ module tinymoa_dcim #(
     output [2:0] dbg_state
 );
 
-    // MMIO config registers are wrote by the CPU before asserting cfg_start
+    // MMIO config registers
     reg        cfg_start;
     reg        cfg_reload_weights;
     reg [2:0]  cfg_precision;    // bit-planes per activation: 1, 2, or 4
-    reg [9:0]  cfg_weight_base;  // TCM word address of weight row 0  (default 0x1A0)
-    reg [9:0]  cfg_act_base;     // TCM word address of activation word 0 (default 0x1C0)
-    reg [9:0]  cfg_result_base;  // TCM word address for result writeback  (default 0x1E0)
-    reg [5:0]  cfg_array_size;   // active rows/cols (default 32, max 64)
+    reg [9:0]  cfg_weight_base;  // TCM word address of weight row 0  (default 0x180)
+    reg [9:0]  cfg_act_base;     // TCM word address of activation word 0 (default 0x1A0)
+    reg [9:0]  cfg_result_base;  // TCM word address for result writeback  (default 0x1B0)
+    reg [5:0]  cfg_array_size;   // active rows/cols (default ARRAY_DIM, max 64)
 
     reg [1:0]  status_reg;       // bit 0 = BUSY, bit 1 = DONE
 
@@ -126,7 +126,7 @@ module tinymoa_dcim #(
 
     reg [5:0] row_idx;    // dual-use as row counter in LOAD_WEIGHTS and STORE_RESULT
     reg [2:0] bit_plane;  // current bit-plane index (counts down from cfg_precision-1 to 0)
-    reg       fetch_wait; // 1-cycle wait flag for FETCH_ACT (data valid on second cycle)
+    reg [1:0] fetch_wait; // wait counter for FETCH_ACT (registered TCM needs 2 cycles)
 
     // === MMIO block. Runs independently of FSM, always live for CPU polling ===
     always @(posedge clk or negedge nrst) begin
@@ -134,10 +134,10 @@ module tinymoa_dcim #(
             cfg_start          <= 1'b0;
             cfg_reload_weights <= 1'b1;
             cfg_precision      <= 3'd1;
-            cfg_weight_base    <= 10'h1A0;
-            cfg_act_base       <= 10'h1C0;
-            cfg_result_base    <= 10'h1E0;
-            cfg_array_size     <= 6'd16;
+            cfg_weight_base    <= 10'h180;
+            cfg_act_base       <= 10'h1A0;
+            cfg_result_base    <= 10'h1B0;
+            cfg_array_size     <= ARRAY_DIM[5:0];
             mmio_ready         <= 1'b0;
             mmio_rdata         <= 32'd0;
         end else begin
@@ -192,7 +192,7 @@ module tinymoa_dcim #(
             row_idx    <= 6'b0;
             bit_plane  <= 3'b0;
             bias_reg   <= 16'b0;
-            fetch_wait <= 1'b0;
+            fetch_wait <= 2'b0;
             mem_write   <= 1'b0;
             mem_read   <= 1'b0;
             mem_addr  <= 10'b0;
@@ -228,19 +228,21 @@ module tinymoa_dcim #(
                 end
 
 
-                // LOAD_WEIGHTS — pipelined: issue next read while latching current.
+                // LOAD_WEIGHTS — pipelined for registered TCM (1-cycle read latency).
                 //
-                // Cycle 0 (row_idx=0): assert ren for row 0; no latch yet.
-                // Cycle 1 (row_idx=1): latch row 0 from mem_rdata; assert ren for row 1.
+                // Cycle 0 (row_idx=0): issue read row 0. No latch.
+                // Cycle 1 (row_idx=1): issue read row 1. TCM registering row 0. No latch.
+                // Cycle 2 (row_idx=2): issue read row 2. Latch row 0 from mem_rdata.
                 // ...
-                // Cycle N (row_idx=N): latch row N-1; no more reads. -> FETCH_ACT.
+                // Cycle N   (row_idx=N):   no more reads. Latch row N-2.
+                // Cycle N+1 (row_idx=N+1): latch row N-1 (final). -> FETCH_ACT.
                 //
-                // Total: cfg_array_size + 1 cycles (vs 2*N without pipelining).
+                // Total: cfg_array_size + 2 cycles.
                 LOAD_WEIGHTS: begin
-                    // Latch previous row (valid from cycle 1 onward)
-                    if (row_idx > 6'd0) begin
+                    // Latch: mem_rdata is valid 2 cycles after read was issued
+                    if (row_idx > 6'd1) begin
                         for (i = 0; i < ARRAY_DIM; i = i + 1)
-                            weight_reg[i][row_idx - 6'd1] <= mem_rdata[i];
+                            weight_reg[i][row_idx - 6'd2] <= mem_rdata[i];
                     end
 
                     if (row_idx < cfg_array_size) begin
@@ -248,6 +250,9 @@ module tinymoa_dcim #(
                         mem_read  <= 1'b1;
                         mem_addr <= cfg_weight_base + {4'd0, row_idx};
                         row_idx   <= row_idx + 6'd1;
+                    end else if (row_idx == cfg_array_size) begin
+                        // One extra cycle: latch the second-to-last row
+                        row_idx <= row_idx + 6'd1;
                     end else begin
                         // All rows latched, begin activation fetch
                         row_idx <= 6'd0;
@@ -258,18 +263,27 @@ module tinymoa_dcim #(
 
                 // FETCH_ACT: issue one TCM read for the current bit-plane.
                 // bit_plane counts MSB-first (cfg_precision-1 down to 0).
-                // Cycle 0: assert ren, set fetch_wait. mem_read cleared at top next cycle.
-                // Cycle 1 (fetch_wait=1): mem_rdata valid; latch act_slice, go to COMPUTE.
+                // Registered TCM: data valid 2 cycles after read issued.
+                // Cycle 0 (fetch_wait=0): issue read.
+                // Cycle 1 (fetch_wait=1): TCM registering. Wait.
+                // Cycle 2 (fetch_wait=2): mem_rdata valid. Latch act_slice.
                 FETCH_ACT: begin
-                    if (!fetch_wait) begin
-                        mem_read   <= 1'b1;
-                        mem_addr  <= cfg_act_base + {7'd0, bit_plane};
-                        fetch_wait <= 1'b1;
-                    end else begin
-                        fetch_wait <= 1'b0;
-                        act_slice  <= mem_rdata[ARRAY_DIM-1:0];
-                        state      <= COMPUTE;
-                    end
+                    case (fetch_wait)
+                        2'd0: begin
+                            mem_read   <= 1'b1;
+                            mem_addr  <= cfg_act_base + {7'd0, bit_plane};
+                            fetch_wait <= 2'd1;
+                        end
+                        2'd1: begin
+                            fetch_wait <= 2'd2;
+                        end
+                        2'd2: begin
+                            fetch_wait <= 2'd0;
+                            act_slice  <= mem_rdata[ARRAY_DIM-1:0];
+                            state      <= COMPUTE;
+                        end
+                        default: fetch_wait <= 2'd0;
+                    endcase
                 end
 
 

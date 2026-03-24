@@ -81,11 +81,6 @@ def test_system_integration():
 
     sources = [
         str(SRC_DIR / "tinymoa.v"),
-        str(SRC_DIR / "cpu.v"),
-        str(SRC_DIR / "counter.v"),
-        str(SRC_DIR / "decoder.v"),
-        str(SRC_DIR / "registers.v"),
-        str(SRC_DIR / "alu.v"),
         str(SRC_DIR / "tcm.v"),
         str(SRC_DIR / "dcim" / "dcim.v"),
         str(SRC_DIR / "dcim" / "compressor.v"),

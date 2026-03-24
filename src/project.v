@@ -18,13 +18,14 @@ module tt_um_tinymoa_ihp26a (
 );
 
     tinymoa_top top (
-      .clk     (clk),                                                                                                                                                                                                                                                
+      .clk     (clk),
       .nrst    (rst_n),
-      .ena     (ena),                                                                                                                                                                                                                                                
-      .ui_in   (ui_in),                                      
-      .uo_out  (uo_out),                                                                                                                                                                                                                                             
+      .ui_in   (ui_in),
+      .uo_out  (uo_out),
       .uio_in  (uio_in),
       .uio_out (uio_out),
-      .uio_oe  (uio_oe)                                                                                                                                                                                                                                              
-    );       
+      .uio_oe  (uio_oe)
+    );
+
+    wire _unused = ena;
 endmodule
