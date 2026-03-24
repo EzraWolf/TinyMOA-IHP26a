@@ -467,43 +467,6 @@ async def test_dcim_inference(dut):
     else:
         raise TimeoutError("DCIM never reached DONE")
 
-    # === Compute expected result with numpy ===
-    # Weight matrix: 16x16 all ones (binary +1)
-    # Activation vector: 16 all ones (binary +1)
-    # XNOR dot product: popcount(XNOR(w_col, act)) per column
-    # Signed conversion: 2*popcount - N*(2^P - 1)
-    N = 16
-    P = 1
-    W = np.ones((N, N), dtype=np.int8)   # binary weights, all 1
-    a = np.ones(N, dtype=np.int8)         # binary activation, all 1
-    # XNOR: 1 when bits match
-    xnor = np.where(W == a, 1, 0)        # all 1 since both are 1
-    popcount = xnor.sum(axis=0)           # 16 per column
-    bias = N * ((1 << P) - 1)             # 16 * 1 = 16
-    expected = 2 * popcount - bias        # 2*16 - 16 = 16 per column
-    dut._log.info(f"numpy expected results: {expected.tolist()}")
-
-    # === Probe RTL internals to trace where data dies ===
-    # Check TCM memory directly: did DCIM write to result region?
-    tcm_mem = dut.dut.tcm.mem
-    for i in range(4):
-        raw = tcm_mem[0x1B0 + i].value
-        dut._log.info(f"TCM mem[0x{0x1B0+i:03X}] = {raw}")
-
-    # Check DCIM internals
-    dcim = dut.dut.dcim
-    dut._log.info(f"DCIM state={dcim.state.value} status={dcim.status_reg.value}")
-    dut._log.info(f"DCIM cfg: wb={dcim.cfg_weight_base.value} ab={dcim.cfg_act_base.value} rb={dcim.cfg_result_base.value} sz={dcim.cfg_array_size.value}")
-    dut._log.info(f"DCIM bias_reg={dcim.bias_reg.value}")
-    for i in range(4):
-        dut._log.info(f"DCIM shift_acc[{i}]={dcim.shift_acc[i].value} weight_reg[{i}]={dcim.weight_reg[i].value}")
-
-    # Check Port B signals
-    dut._log.info(f"Port B: b_en={dut.dut.tcm.b_en.value} b_wen={dut.dut.tcm.b_wen.value} b_addr={dut.dut.tcm.b_addr.value}")
-
-    # Check ext_io read path
-    dut._log.info(f"ext_io: read_reg={dut.dut.read_reg.value} uio_out_reg={dut.dut.uio_out_reg.value} uio_driving={dut.dut.uio_driving.value}")
-
     # 6. Read 16 results from 0x1B0
     results = []
     for i in range(16):
@@ -512,16 +475,129 @@ async def test_dcim_inference(dut):
         await io_execute(dut)
         val = 0
         for j in range(4):
-            try:
-                val |= (await io_read_byte(dut)) << (j * 8)
-            except ValueError as e:
-                dut._log.error(f"result[{i}] byte {j}: {e}")
-                val = 0xDEAD
-                break
-        if val != 0xDEAD and val >= 0x80000000:
+            val |= (await io_read_byte(dut)) << (j * 8)
+        if val >= 0x80000000:
+            val -= 0x100000000
+        results.append(val)
+
+    for i, val in enumerate(results):
+        assert val == 16, f"result[{i}] = {val}, expected 16"
+
+
+# === Helper: compute DCIM signed dot product with numpy ===
+
+
+def dcim_expected(weight_rows, act_planes, N, P):
+    """Compute expected DCIM output for N-wide array with P-bit precision.
+
+    weight_rows: list of N ints, each is an N-bit word (row-major, bit[col]=W[row][col])
+    act_planes: list of P ints, each is an N-bit word (MSB plane first)
+    Returns: list of N signed ints
+    """
+    # Build weight_reg[col] by transposing rows
+    weight_reg = []
+    for col in range(N):
+        bits = 0
+        for row in range(N):
+            if weight_rows[row] & (1 << col):
+                bits |= 1 << row
+        weight_reg.append(bits)
+
+    # Shift-accumulate across bit-planes (MSB first)
+    shift_acc = [0] * N
+    for act_word in act_planes:
+        act_bits = act_word & ((1 << N) - 1)
+        for col in range(N):
+            xnor = ~(weight_reg[col] ^ act_bits) & ((1 << N) - 1)
+            pc = bin(xnor).count("1")
+            shift_acc[col] = (shift_acc[col] << 1) + pc
+
+    # Signed conversion: 2*shift_acc - bias
+    bias = N * ((1 << P) - 1)
+    return [2 * s - bias for s in shift_acc]
+
+
+@cocotb.test()
+async def test_dcim_random_dotprod(dut):
+    """Random 16x16 binary dot product via DCIM, verified against numpy.
+
+    Generates random binary weights and activation, computes expected
+    result with numpy, then runs full inference through the IO pins
+    and compares.
+    """
+    await setup(dut)
+    N = 16
+    P = 1
+    mask = (1 << N) - 1
+
+    # Generate random weights and activation
+    rng = np.random.RandomState(42)
+    weight_rows = [int(rng.randint(0, mask + 1)) for _ in range(N)]
+    act_planes = [int(rng.randint(0, mask + 1))]
+
+    # Compute expected with numpy
+    expected = dcim_expected(weight_rows, act_planes, N, P)
+    dut._log.info(f"weights: {[hex(w) for w in weight_rows]}")
+    dut._log.info(f"activation: {hex(act_planes[0])}")
+    dut._log.info(f"expected: {expected}")
+
+    # 1. Load 16 weight words at 0x180
+    await io_write_byte(dut, 0x80, addr_load=1)
+    await io_write_byte(dut, 0x01, addr_load=1)
+    for row in range(N):
+        w = weight_rows[row]
+        await io_write_byte(dut, (w >> 0) & 0xFF)
+        await io_write_byte(dut, (w >> 8) & 0xFF)
+        await io_write_byte(dut, (w >> 16) & 0xFF)
+        await io_write_byte(dut, (w >> 24) & 0xFF)
+        await io_execute(dut, RW)
+
+    # 2. Load 1 activation word at 0x1A0
+    await io_write_byte(dut, 0xA0, addr_load=1)
+    await io_write_byte(dut, 0x01, addr_load=1)
+    a = act_planes[0]
+    await io_write_byte(dut, (a >> 0) & 0xFF)
+    await io_write_byte(dut, (a >> 8) & 0xFF)
+    await io_write_byte(dut, (a >> 16) & 0xFF)
+    await io_write_byte(dut, (a >> 24) & 0xFF)
+    await io_execute(dut, RW)
+
+    # 3. CTRL = 0x13 (reload=1, prec=1, start=1). Defaults are already correct.
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0x00, addr_load=1)
+    await io_write_byte(dut, 0x13, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_write_byte(dut, 0x00, target=1)
+    await io_execute(dut, TARGET | RW)
+
+    # 4. Poll STATUS until DONE
+    for _ in range(5000):
+        await io_write_byte(dut, 0x04, addr_load=1)
+        await io_write_byte(dut, 0x00, addr_load=1)
+        await io_execute(dut, TARGET)
+        b0 = await io_read_byte(dut, target=1)
+        if b0 & 0x2:
+            break
+        await ClockCycles(dut.clk, 1)
+    else:
+        raise TimeoutError("DCIM never reached DONE")
+
+    # 5. Read 16 results from 0x1B0
+    results = []
+    for i in range(N):
+        await io_write_byte(dut, (0x1B0 + i) & 0xFF, addr_load=1)
+        await io_write_byte(dut, ((0x1B0 + i) >> 8) & 0xFF, addr_load=1)
+        await io_execute(dut)
+        val = 0
+        for j in range(4):
+            val |= (await io_read_byte(dut)) << (j * 8)
+        if val >= 0x80000000:
             val -= 0x100000000
         results.append(val)
 
     dut._log.info(f"results: {results}")
-    for i, val in enumerate(results):
-        assert val == expected[i], f"result[{i}] = {val}, expected {expected[i]}"
+    for i in range(N):
+        assert results[i] == expected[i], (
+            f"col {i}: got {results[i]}, expected {expected[i]}"
+        )

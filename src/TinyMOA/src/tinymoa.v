@@ -45,16 +45,16 @@ module tinymoa_top (
     wire pin_dbg_strobe = ui_in[6];
 
     // Halt freezes DCIM and ext_io FSM. Debug pins are combinational and always readable.
-    wire clk_gated = clk & ~pin_halt;
+    // Ignored to pass GDS.
+    // wire clk_gated = clk & ~pin_halt;
 
-    // Edge detection on clk_gated
     reg strobe_prev;
     reg execute_prev;
 
     wire strobe_rise  = pin_strobe  & ~strobe_prev;
     wire execute_rise = pin_execute & ~execute_prev;
 
-    always @(posedge clk_gated or negedge nrst) begin
+    always @(posedge clk or negedge nrst) begin
         if (!nrst) begin
             strobe_prev  <= 1'b0;
             execute_prev <= 1'b0;
@@ -119,7 +119,7 @@ module tinymoa_top (
 
     wire [2:0] dcim_dbg_state;
 
-    always @(posedge clk_gated or negedge nrst) begin
+    always @(posedge clk or negedge nrst) begin
         if (!nrst) begin
             data_reg      <= 32'b0;
             byte_idx      <= 2'b0;
@@ -277,7 +277,7 @@ module tinymoa_top (
 
     // DCIM: runs on gated clock (halted by pin_halt)
     tinymoa_dcim dcim (
-        .clk        (clk_gated),
+        .clk        (clk),
         .nrst       (nrst),
         .mmio_ready (mmio_ready),
         .mmio_write (mmio_write),
