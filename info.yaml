@@ -4,7 +4,7 @@ project:
   discord:      "erstfeld" # Optional
   description:  "RISC-V CPU based on TinyQV with an integrated SRAM-based compute-in-memory (CIM) accelerator for performing efficient analog matrix multiplications."
   language:     "Verilog" # Valid: Verilog, SystemVerilog, Amaranth, VHDL, etc.
-  clock_hz:     50000000 # Clock Hz (or 0 if N/A)
+  clock_hz:     20000000 # Clock Hz (or 0 if N/A)
 
   # A single tile is ~167x108um
   # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
