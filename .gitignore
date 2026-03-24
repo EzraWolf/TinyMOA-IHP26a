@@ -18,3 +18,6 @@ src/TinyMOA/uv.lock
 src/TinyMOA/.python-version
 src/TinyMOA/.venv/
 src/TinyMOA/docs/
+
+# Ignore TinyTapeout support tools
+/tt/
